@@ -1,12 +1,20 @@
+use bevy::core::FixedTimestep;
 use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
-use rand::{Rng, RngCore, thread_rng};
+use bevy::sprite::collide_aabb::collide;
+use rand::{ RngCore, thread_rng};
 use rand::seq::SliceRandom;
 
+// Defines the amount of time that should elapse between each physics step.
+const TIME_STEP: f32 = 1.0 / 60.0;
+
+// Define sizes
 const BUILDING_WIDTH: f32 = 160.0;
 const SCREEN_WIDTH: f32 = 1280.0;
 const SCREEN_HEIGHT: f32 = 720.0;
+const BANANA_WIDTH: f32 = 20.0;
+const BANANA_HEIGHT: f32 = 20.0;
 
 fn main() {
     let background_color: Color = Color::rgb_u8(126, 161, 219);//cornflower blue
@@ -21,12 +29,31 @@ fn main() {
         })
         .add_plugins(DefaultPlugins)
         .add_startup_system(setup)
+        .add_event::<CollisionEvent>()
+        .add_system_set(
+            SystemSet::new()
+                .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
+                .with_system(check_for_collisions)
+                .with_system(apply_velocity.before(check_for_collisions))
+                .with_system(play_collision_sound.after(check_for_collisions)),
+        )
         .add_system(bevy::input::system::exit_on_esc_system)
         .run();
 }
 
 #[derive(Component)]
 struct Building;
+
+#[derive(Component)]
+struct Collider;
+
+#[derive(Component)]
+struct Banana;
+
+#[derive(Component, Deref, DerefMut)]
+struct Velocity(Vec2);
+#[derive(Default)]
+struct CollisionEvent;
 
 fn setup(mut commands: Commands) {
     // Random
@@ -56,9 +83,27 @@ fn setup(mut commands: Commands) {
             color,
             BUILDING_WIDTH,
             height,
-            start_left + (BUILDING_WIDTH * n),
-            start_bottom,
+            start_left + BUILDING_WIDTH / 2.0 + (BUILDING_WIDTH * n),
+            start_bottom + (height / 2.0),
         );
+    }
+
+    // Banana
+    commands.spawn().insert(Banana).insert_bundle(SpriteBundle {
+        transform: Transform {
+            translation: Vec2::new(-SCREEN_WIDTH/2.0+(BUILDING_WIDTH/2.0),SCREEN_HEIGHT/2.0-100.0).extend(0.0),
+            scale: Vec2::new(BANANA_WIDTH, BANANA_HEIGHT).extend(1.0), // scale z=1.0 in 2D
+            ..default()
+        },
+        sprite: Sprite { color: Color::YELLOW, ..default() },
+        ..default()
+    }).insert(Velocity(Vec2::new(0.0, -90.0)));
+}
+
+fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>) {
+    for (mut transform, velocity) in query.iter_mut() {
+        transform.translation.x += velocity.x * TIME_STEP;
+        transform.translation.y += velocity.y * TIME_STEP;
     }
 }
 
@@ -77,7 +122,35 @@ fn spawn_building(
             scale: Vec2::new(width, height).extend(1.0), // scale z=1.0 in 2D
             ..default()
         },
-        sprite: Sprite { color, anchor: Anchor::BottomLeft, ..default() },
+        sprite: Sprite { color, ..default() },
         ..default()
-    });
+    }).insert(Collider);
+}
+fn check_for_collisions(
+    banana_query: Query<(&Transform), With<Banana>>,
+    collider_query: Query<(Entity, &Transform, Option<&Building>), With<Collider>>,
+    mut collision_events: EventWriter<CollisionEvent>,
+) {
+    let b_transform = banana_query.single();
+    let b_size = b_transform.scale.truncate();
+
+    // check collision with walls
+    for (_collider_entity, transform, _maybe_building) in collider_query.iter() {
+        let collision = collide(
+            b_transform.translation,
+            b_size,
+            transform.translation,
+            transform.scale.truncate(),
+        );
+        if let Some(_collision) = collision {
+            collision_events.send_default();
+        }
+    }
+}
+fn play_collision_sound(
+    mut collision_events: EventReader<CollisionEvent>,
+) {
+    if collision_events.iter().count() > 0 {
+        println!("BOOM!!")
+    }
 }
