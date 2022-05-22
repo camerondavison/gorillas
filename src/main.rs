@@ -1,5 +1,6 @@
 use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;
+use bevy::sprite::Anchor;
 use rand::{Rng, RngCore, thread_rng};
 use rand::seq::SliceRandom;
 
@@ -55,8 +56,8 @@ fn setup(mut commands: Commands) {
             color,
             BUILDING_WIDTH,
             height,
-            start_left + BUILDING_WIDTH / 2.0 + (BUILDING_WIDTH * n),
-            start_bottom + (height / 2.0),
+            start_left + (BUILDING_WIDTH * n),
+            start_bottom,
         );
     }
 }
@@ -76,7 +77,7 @@ fn spawn_building(
             scale: Vec2::new(width, height).extend(1.0), // scale z=1.0 in 2D
             ..default()
         },
-        sprite: Sprite { color, ..default() },
+        sprite: Sprite { color, anchor: Anchor::BottomLeft, ..default() },
         ..default()
     });
 }
