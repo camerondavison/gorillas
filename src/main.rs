@@ -1,9 +1,8 @@
 use bevy::core::FixedTimestep;
 use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;
-use bevy::sprite::Anchor;
 use bevy::sprite::collide_aabb::collide;
-use rand::{ RngCore, thread_rng};
+use rand::{RngCore, thread_rng};
 use rand::seq::SliceRandom;
 
 // Defines the amount of time that should elapse between each physics step.
@@ -34,6 +33,7 @@ fn main() {
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
                 .with_system(check_for_collisions)
+                .with_system(apply_acceleration.before(check_for_collisions))
                 .with_system(apply_velocity.before(check_for_collisions))
                 .with_system(play_collision_sound.after(check_for_collisions)),
         )
@@ -50,8 +50,18 @@ struct Collider;
 #[derive(Component)]
 struct Banana;
 
-#[derive(Component, Deref, DerefMut)]
+#[derive(Component, Deref, DerefMut, Debug)]
 struct Velocity(Vec2);
+
+#[derive(Component)]
+struct Wind;
+
+#[derive(Component)]
+struct Gravity;
+
+#[derive(Component, Deref)]
+struct Acceleration(Vec2);
+
 #[derive(Default)]
 struct CollisionEvent;
 
@@ -88,6 +98,10 @@ fn setup(mut commands: Commands) {
         );
     }
 
+    // World
+    commands.spawn().insert(Gravity).insert(Acceleration(Vec2::new(0.0,-30.0)));
+    commands.spawn().insert(Wind).insert(Acceleration(Vec2::new(-10.0, 0.0)));
+
     // Banana
     commands.spawn().insert(Banana).insert_bundle(SpriteBundle {
         transform: Transform {
@@ -98,6 +112,19 @@ fn setup(mut commands: Commands) {
         sprite: Sprite { color: Color::YELLOW, ..default() },
         ..default()
     }).insert(Velocity(Vec2::new(0.0, -90.0)));
+}
+
+fn apply_acceleration(
+    acceleration_query: Query<&Acceleration>,
+    mut velocity_query: Query<&mut Velocity>,
+) {
+    for acc in acceleration_query.iter() {
+        for mut velocity in velocity_query.iter_mut() {
+            println!("velocity {:?}", velocity);
+            velocity.x += acc.x * TIME_STEP;
+            velocity.y += acc.y * TIME_STEP;
+        }
+    }
 }
 
 fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>) {
@@ -126,27 +153,32 @@ fn spawn_building(
         ..default()
     }).insert(Collider);
 }
+
 fn check_for_collisions(
-    banana_query: Query<(&Transform), With<Banana>>,
+    mut commands: Commands,
+    banana_query: Query<(Entity, &Transform), With<Banana>>,
     collider_query: Query<(Entity, &Transform, Option<&Building>), With<Collider>>,
     mut collision_events: EventWriter<CollisionEvent>,
 ) {
-    let b_transform = banana_query.single();
-    let b_size = b_transform.scale.truncate();
+    if let Ok((b_entity, b_transform)) = banana_query.get_single() {
+        let b_size = b_transform.scale.truncate();
 
-    // check collision with walls
-    for (_collider_entity, transform, _maybe_building) in collider_query.iter() {
-        let collision = collide(
-            b_transform.translation,
-            b_size,
-            transform.translation,
-            transform.scale.truncate(),
-        );
-        if let Some(_collision) = collision {
-            collision_events.send_default();
+        // check collision with walls
+        for (_collided_entity, transform, _maybe_building) in collider_query.iter() {
+            let collision = collide(
+                b_transform.translation,
+                b_size,
+                transform.translation,
+                transform.scale.truncate(),
+            );
+            if let Some(_collision) = collision {
+                collision_events.send_default();
+                commands.entity(b_entity).despawn();
+            }
         }
     }
 }
+
 fn play_collision_sound(
     mut collision_events: EventReader<CollisionEvent>,
 ) {
