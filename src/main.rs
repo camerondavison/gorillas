@@ -100,7 +100,7 @@ fn setup(mut commands: Commands) {
 
     // World
     commands.spawn().insert(Gravity).insert(Acceleration(Vec2::new(0.0,-30.0)));
-    commands.spawn().insert(Wind).insert(Acceleration(Vec2::new(-10.0, 0.0)));
+    commands.spawn().insert(Wind).insert(Acceleration(Vec2::new(10.0, 0.0)));
 
     // Banana
     commands.spawn().insert(Banana).insert_bundle(SpriteBundle {
