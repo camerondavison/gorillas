@@ -55,14 +55,14 @@ struct CollisionEvent;
 #[derive(Component)]
 struct CurrentPlayersTurnText;
 
-#[derive(Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
 enum Player {
     ONE,
     TWO,
 }
-#[derive(Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
 enum Action {
-    ENTER{degrees: u8, speed: u8},
+    ENTER,
     THROWING,
     WATCHING,
 }
@@ -74,13 +74,28 @@ impl Default for GameState {
     fn default() -> Self {
         Self {
             player: Player::ONE,
-            action: Action::ENTER{degrees: 45, speed: 30},
+            action: Action::ENTER,
         }
     }
 }
 
 #[derive(Component)]
 struct Gorilla(Player);
+
+#[derive(Component)]
+struct AngleSpeed{
+    angle: u8,
+    speed: u8,
+}
+
+impl Default for AngleSpeed {
+    fn default() -> Self {
+        AngleSpeed {
+            angle: 45,
+            speed: 30,
+        }
+    }
+}
 
 #[derive(Component)]
 struct Name(String);
@@ -271,7 +286,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 },
                 sprite: Sprite { color: gorilla_color, ..default() },
                 ..default()
-            }).insert(Name(n.to_string()));
+            }).insert(Name(n.to_string())).insert(AngleSpeed::default());
         }
     }
 
@@ -346,7 +361,7 @@ fn check_for_collisions(
                         player_turn.player = Player::ONE;
                     }
                 }
-                player_turn.action = Action::ENTER{degrees: 45, speed: 30};
+                player_turn.action = Action::ENTER;
             }
         }
     }
@@ -361,22 +376,27 @@ fn play_collision_sound(
 }
 
 fn change_action(
-    mut player_turn: ResMut<GameState>,
+    player_turn: ResMut<GameState>,
+    mut query_angle_speed: Query<(&Gorilla, &mut AngleSpeed)>,
     keyboard_input: Res<Input<KeyCode>>,
 ) {
     match player_turn.action {
-        Action::ENTER { ref mut degrees, ref mut speed } => {
-            if keyboard_input.just_pressed(KeyCode::Up) {
-                *degrees += 1
-            }
-            if keyboard_input.just_pressed(KeyCode::Down) {
-                *degrees -= 1
-            }
-            if keyboard_input.just_pressed(KeyCode::Right) {
-                *speed += 1
-            }
-            if keyboard_input.just_pressed(KeyCode::Left) {
-                *speed -= 1
+        Action::ENTER  => {
+            for (g,ref mut a) in query_angle_speed.iter_mut() {
+                if g.0 == player_turn.player {
+                    if keyboard_input.just_pressed(KeyCode::Up) {
+                        a.angle += 1
+                    }
+                    if keyboard_input.just_pressed(KeyCode::Down) {
+                        a.angle -= 1
+                    }
+                    if keyboard_input.just_pressed(KeyCode::Right) {
+                        a.speed += 1
+                    }
+                    if keyboard_input.just_pressed(KeyCode::Left) {
+                        a.speed -= 1
+                    }
+                }
             }
         }
         _ => {}
@@ -386,13 +406,15 @@ fn change_action(
 fn throw_banana(
     keyboard_input: Res<Input<KeyCode>>,
     mut player_turn: ResMut<GameState>,
-    gorilla_query: Query<(&Gorilla, &Transform)>,
+    gorilla_query: Query<(&Gorilla, &Transform, &AngleSpeed)>,
     mut commands: Commands,
 ) {
     match player_turn.action {
-        Action::ENTER{degrees, speed} => if keyboard_input.pressed(KeyCode::Space) {
-            for (g, t) in gorilla_query.iter() {
+        Action::ENTER => if keyboard_input.pressed(KeyCode::Space) {
+            for (g, t, a) in gorilla_query.iter() {
                 if g.0 == player_turn.player {
+                    let angle = a.angle;
+                    let speed = a.speed;
                     // if left alone compass loos like this, but we want to make 90 straight up
                     // and for 100 to be behind the head
                     //        0
@@ -404,7 +426,7 @@ fn throw_banana(
                     //       90
                     // 180 <- * -> 0
                     //       270
-                    let radians = (90-degrees) as f32 * PI / 180.0;
+                    let radians = (90-angle) as f32 * PI / 180.0;
                     let mut v = Vec2::new((radians).sin() * (speed as f32), (radians).cos() * (speed as f32));
 
                     // scale, then reverse for player 2
@@ -455,24 +477,23 @@ fn spawn_banana(mut commands: EntityCommands, g_pos: Vec3, _g_size: Vec3, initia
 fn update_text_left(
     player_turn: Res<GameState>,
     mut query: Query<&mut Text, With<LeftBoard>>,
-    name_query: Query<(&Gorilla, &Name)>
+    name_query: Query<(&Gorilla, &AngleSpeed, &Name)>
 ) {
     let mut text = query.single_mut();
+    if let Some((_, a, n)) =name_query.iter().filter(|(g,_,_)| g.0 == player_turn.player).next() {
+        text.sections[1].value = format!("{}", n.0);
 
-    for (g, n) in name_query.iter() {
-        if player_turn.player == g.0 {
-            text.sections[1].value = format!("{}", n.0);
-        }
+        let (action, v) = match player_turn.action {
+            Action::ENTER => ("How do you want to throw?", ("\nVelocity: ", format!("{}(m/s) @ {}°", a.speed, a.angle))),
+            Action::THROWING => ("Chunk", ("", "".to_string())),
+            Action::WATCHING => ("Whoa!", ("", "".to_string())),
+        };
+        text.sections[3].value = action.to_string();
+        text.sections[4].value = v.0.to_string();
+        text.sections[5].value = v.1;
+    } else {
+        error!("unable to find gorilla for player {:?}", player_turn.player)
     }
-
-    let (action, v) = match player_turn.action {
-        Action::ENTER{degrees, speed} => ("How do you want to throw?", ("\nVelocity: ", format!("{}(m/s) @ {}°", speed, degrees))),
-        Action::THROWING => ("Chunk", ("", "".to_string())),
-        Action::WATCHING => ("Whoa!", ("", "".to_string())),
-    };
-    text.sections[3].value = action.to_string();
-    text.sections[4].value = v.0.to_string();
-    text.sections[5].value = v.1;
 }
 
 fn update_text_right(
