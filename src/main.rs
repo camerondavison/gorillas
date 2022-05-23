@@ -1,15 +1,14 @@
-use std::cmp;
-use std::fmt::Formatter;
+use std::f32::consts::PI;
 use bevy::core::FixedTimestep;
 use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;
 use bevy::sprite::collide_aabb::collide;
 use rand::{RngCore, thread_rng};
 use rand::seq::SliceRandom;
-use crate::Action::ENTER;
 
 // Defines the amount of time that should elapse between each physics step.
 const TIME_STEP: f32 = 1.0 / 60.0;
+const PIXEL_STEP_SIZE: f32 = 10.0;
 
 // Define sizes
 const BUILDING_WIDTH: f32 = 160.0;
@@ -20,6 +19,9 @@ const BANANA_HEIGHT: f32 = 20.0;
 const GORILLA_HEIGHT: f32 = 64.0;
 const GORILLA_WIDTH: f32 = 32.0;
 
+// Speeds
+const GRAVITY_Y_ACCEL: f32 = -9.8 * PIXEL_STEP_SIZE;
+
 #[derive(Component)]
 struct Building;
 
@@ -28,6 +30,12 @@ struct Collider;
 
 #[derive(Component)]
 struct Banana;
+
+#[derive(Component)]
+struct LeftBoard;
+
+#[derive(Component)]
+struct RightBoard;
 
 #[derive(Component, Deref, DerefMut, Debug)]
 struct Velocity(Vec2);
@@ -54,7 +62,7 @@ enum Player {
 }
 #[derive(Ord, PartialOrd, Eq, PartialEq)]
 enum Action {
-    ENTER(u8, u8),
+    ENTER{degrees: u8, speed: u8},
     THROWING,
     WATCHING,
 }
@@ -66,7 +74,7 @@ impl Default for GameState {
     fn default() -> Self {
         Self {
             player: Player::ONE,
-            action: Action::ENTER(45, 30),
+            action: Action::ENTER{degrees: 45, speed: 30},
         }
     }
 }
@@ -93,6 +101,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_startup_system(setup)
         .add_event::<CollisionEvent>()
+        .add_system(change_action)
         .add_system(throw_banana)
         .add_system(watch_banana)
         .add_system_set(
@@ -103,7 +112,8 @@ fn main() {
                 .with_system(apply_velocity.before(check_for_collisions))
                 .with_system(play_collision_sound.after(check_for_collisions))
         )
-        .add_system(update_text)
+        .add_system(update_text_left)
+        .add_system(update_text_right)
         .add_system(bevy::input::system::exit_on_esc_system)
         .run();
 }
@@ -120,7 +130,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font_bold = asset_server.load("fonts/FiraSans-Bold.ttf");
     let font_medium = asset_server.load("fonts/FiraMono-Medium.ttf");
 
-    commands.spawn_bundle(TextBundle {
+    commands.spawn().insert(LeftBoard).insert_bundle(TextBundle {
         text: Text {
             sections: vec![
                 TextSection {
@@ -156,7 +166,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     },
                 },
                 TextSection {
-                    value: "\nVelocity: ".to_string(),
+                    value: "".to_string(),
                     style: TextStyle {
                         font: font_bold.clone(),
                         font_size: 30.0,
@@ -179,6 +189,40 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             position: Rect {
                 top: Val::Px(5.0),
                 left: Val::Px(5.0),
+                ..default()
+            },
+            ..default()
+        },
+        ..default()
+    });
+
+    commands.spawn().insert(RightBoard).insert_bundle(TextBundle {
+        text: Text {
+            sections: vec![
+                TextSection {
+                    value: "".to_string(),
+                    style: TextStyle {
+                        font: font_medium.clone(),
+                        font_size: 30.0,
+                        color: Color::BLACK,
+                    },
+                },
+                TextSection {
+                    value: " <- Banana".to_string(),
+                    style: TextStyle {
+                        font: font_bold.clone(),
+                        font_size: 30.0,
+                        color: Color::BLACK,
+                    },
+                },
+            ],
+            ..default()
+        },
+        style: Style {
+            position_type: PositionType::Absolute,
+            position: Rect {
+                top: Val::Px(5.0),
+                right: Val::Px(100.0),
                 ..default()
             },
             ..default()
@@ -232,8 +276,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     }
 
     // World
-    commands.spawn().insert(Gravity).insert(Acceleration(Vec2::new(0.0,-30.0)));
-    commands.spawn().insert(Wind).insert(Acceleration(Vec2::new(10.0, 0.0)));
+    commands.spawn().insert(Gravity).insert(Acceleration(Vec2::new(0.0,GRAVITY_Y_ACCEL)));
+    //commands.spawn().insert(Wind).insert(Acceleration(Vec2::new(10.0, 0.0)));
 }
 
 fn apply_acceleration(
@@ -302,7 +346,7 @@ fn check_for_collisions(
                         player_turn.player = Player::ONE;
                     }
                 }
-                player_turn.action = ENTER(45, 30);
+                player_turn.action = Action::ENTER{degrees: 45, speed: 30};
             }
         }
     }
@@ -316,6 +360,29 @@ fn play_collision_sound(
     }
 }
 
+fn change_action(
+    mut player_turn: ResMut<GameState>,
+    keyboard_input: Res<Input<KeyCode>>,
+) {
+    match player_turn.action {
+        Action::ENTER { ref mut degrees, ref mut speed } => {
+            if keyboard_input.just_pressed(KeyCode::Up) {
+                *degrees += 1
+            }
+            if keyboard_input.just_pressed(KeyCode::Down) {
+                *degrees -= 1
+            }
+            if keyboard_input.just_pressed(KeyCode::Right) {
+                *speed += 1
+            }
+            if keyboard_input.just_pressed(KeyCode::Left) {
+                *speed -= 1
+            }
+        }
+        _ => {}
+    }
+}
+
 fn throw_banana(
     keyboard_input: Res<Input<KeyCode>>,
     mut player_turn: ResMut<GameState>,
@@ -323,14 +390,29 @@ fn throw_banana(
     mut commands: Commands,
 ) {
     match player_turn.action {
-        Action::ENTER(_, _) => if keyboard_input.pressed(KeyCode::Space) {
+        Action::ENTER{degrees, speed} => if keyboard_input.pressed(KeyCode::Space) {
             for (g, t) in gorilla_query.iter() {
                 if g.0 == player_turn.player {
-                    let v = if player_turn.player == Player::ONE {
-                        Vec2::new(70.0, 110.0) // todo: base on input
-                    } else {
-                        Vec2::new(-70.0, 110.0)
-                    };
+                    // if left alone compass loos like this, but we want to make 90 straight up
+                    // and for 100 to be behind the head
+                    //        0
+                    // 270 <- * -> 90
+                    //       180
+                    //
+                    // so we are just going to do (90 - *degrees*)
+                    // to make it go
+                    //       90
+                    // 180 <- * -> 0
+                    //       270
+                    let radians = (90-degrees) as f32 * PI / 180.0;
+                    let mut v = Vec2::new((radians).sin() * (speed as f32), (radians).cos() * (speed as f32));
+
+                    // scale, then reverse for player 2
+                    v *= PIXEL_STEP_SIZE;
+                    if player_turn.player == Player::TWO {
+                        v.x *= -1.0
+                    }
+
                     spawn_banana(commands.spawn(), t.translation, t.scale, v);
                     player_turn.action = Action::THROWING;
                 }
@@ -358,7 +440,7 @@ fn watch_banana(
     }
 }
 
-fn spawn_banana(mut commands: EntityCommands, g_pos: Vec3, g_size: Vec3, initial_velocity: Vec2) {
+fn spawn_banana(mut commands: EntityCommands, g_pos: Vec3, _g_size: Vec3, initial_velocity: Vec2) {
     commands.insert(Banana).insert_bundle(SpriteBundle {
         transform: Transform {
             translation: g_pos,
@@ -370,9 +452,9 @@ fn spawn_banana(mut commands: EntityCommands, g_pos: Vec3, g_size: Vec3, initial
     }).insert(Velocity(initial_velocity));
 }
 
-fn update_text(
+fn update_text_left(
     player_turn: Res<GameState>,
-    mut query: Query<&mut Text>,
+    mut query: Query<&mut Text, With<LeftBoard>>,
     name_query: Query<(&Gorilla, &Name)>
 ) {
     let mut text = query.single_mut();
@@ -383,10 +465,29 @@ fn update_text(
         }
     }
 
-    let action = match player_turn.action {
-        Action::ENTER(_, _) => "Please enter...",
-        Action::THROWING => "Chunk.",
-        Action::WATCHING => "Whoa!",
+    let (action, v) = match player_turn.action {
+        Action::ENTER{degrees, speed} => ("How do you want to throw?", ("\nVelocity: ", format!("{}(m/s) @ {}°", speed, degrees))),
+        Action::THROWING => ("Chunk", ("", "".to_string())),
+        Action::WATCHING => ("Whoa!", ("", "".to_string())),
     };
-    text.sections[3].value = format!("{}", action)
+    text.sections[3].value = action.to_string();
+    text.sections[4].value = v.0.to_string();
+    text.sections[5].value = v.1;
+}
+
+fn update_text_right(
+    player_turn: Res<GameState>,
+    mut query: Query<&mut Text, With<RightBoard>>,
+     banana_query: Query<&mut Velocity, With<Banana>>,
+) {
+    let mut text = query.single_mut();
+    let v = if let Ok(velocity) = banana_query.get_single() {
+        match player_turn.action {
+            Action::ENTER { .. } => "".to_string(),
+            Action::THROWING|Action::WATCHING => format!("{}x{}", velocity.x.round(), velocity.y.round()),
+        }
+    } else {
+        "".to_string()
+    };
+    text.sections[0].value = v;
 }
