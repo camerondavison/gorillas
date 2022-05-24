@@ -65,6 +65,7 @@ enum Action {
     ENTER,
     THROWING,
     WATCHING,
+    WINNER,
 }
 struct GameState {
     player: Player,
@@ -286,13 +287,15 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 },
                 sprite: Sprite { color: gorilla_color, ..default() },
                 ..default()
-            }).insert(Name(n.to_string())).insert(AngleSpeed::default());
+            }).insert(Name(n.to_string())).insert(Collider).insert(AngleSpeed::default());
         }
     }
 
     // World
     commands.spawn().insert(Gravity).insert(Acceleration(Vec2::new(0.0,GRAVITY_Y_ACCEL)));
-    //commands.spawn().insert(Wind).insert(Acceleration(Vec2::new(10.0, 0.0)));
+    // todo: wind
+    // commands.spawn().insert(Wind).insert(Acceleration(Vec2::new(10.0, 0.0)));
+    // use bevy_prototype_lyon maybe? to draw wind using svg.
 }
 
 fn apply_acceleration(
@@ -337,34 +340,52 @@ fn spawn_building(
 fn check_for_collisions(
     mut commands: Commands,
     banana_query: Query<(Entity, &Transform), With<Banana>>,
-    collider_query: Query<(Entity, &Transform, Option<&Building>), With<Collider>>,
+    collider_query: Query<(Entity, &Transform, Option<&Building>, Option<&Gorilla>), With<Collider>>,
     mut player_turn: ResMut<GameState>,
     mut collision_events: EventWriter<CollisionEvent>,
 ) {
     if let Ok((banana_entity, banana_transform)) = banana_query.get_single() {
-        // check collision with walls
-        for (_collided_entity, transform, _maybe_building) in collider_query.iter() {
-            let collision = collide(
-                banana_transform.translation,
-                banana_transform.scale.truncate(),
-                transform.translation,
-                transform.scale.truncate(),
-            );
-            if let Some(_collision) = collision {
-                collision_events.send_default();
-                commands.entity(banana_entity).despawn();
-                match player_turn.player {
-                    Player::ONE => {
-                        player_turn.player = Player::TWO;
-                    }
-                    Player::TWO => {
-                        player_turn.player = Player::ONE;
+        // if off screen
+        if banana_transform.translation.x <= -SCREEN_WIDTH/2.0 || banana_transform.translation.x >= SCREEN_WIDTH/2.0 {
+            commands.entity(banana_entity).despawn();
+            next_player(&mut player_turn);
+        } else {
+            for (_collided_entity, transform, _maybe_building, maybe_gorilla) in collider_query.iter() {
+                let collision = collide(
+                    banana_transform.translation,
+                    banana_transform.scale.truncate(),
+                    transform.translation,
+                    transform.scale.truncate(),
+                );
+                if let Some(gorilla) = maybe_gorilla {
+                    if gorilla.0 == player_turn.player {
+                        continue
                     }
                 }
-                player_turn.action = Action::ENTER;
+                if let Some(_) = collision {
+                    collision_events.send_default();
+                    commands.entity(banana_entity).despawn();
+                    if let Some(_) = maybe_gorilla {
+                        player_turn.action = Action::WINNER;
+                    } else {
+                        next_player(&mut player_turn);
+                    }
+                }
             }
         }
     }
+}
+
+fn next_player(player_turn: &mut ResMut<GameState>) {
+    match player_turn.player {
+        Player::ONE => {
+            player_turn.player = Player::TWO;
+        }
+        Player::TWO => {
+            player_turn.player = Player::ONE;
+        }
+    }
+    player_turn.action = Action::ENTER;
 }
 
 fn play_collision_sound(
@@ -410,7 +431,7 @@ fn throw_banana(
     mut commands: Commands,
 ) {
     match player_turn.action {
-        Action::ENTER => if keyboard_input.pressed(KeyCode::Space) {
+        Action::ENTER => if keyboard_input.just_pressed(KeyCode::Space) {
             for (g, t, a) in gorilla_query.iter() {
                 if g.0 == player_turn.player {
                     let angle = a.angle;
@@ -430,7 +451,7 @@ fn throw_banana(
                     let mut v = Vec2::new((radians).sin() * (speed as f32), (radians).cos() * (speed as f32));
 
                     // scale, then reverse for player 2
-                    v *= PIXEL_STEP_SIZE;
+                    v *= (PIXEL_STEP_SIZE / 1.5);
                     if player_turn.player == Player::TWO {
                         v.x *= -1.0
                     }
@@ -487,6 +508,7 @@ fn update_text_left(
             Action::ENTER => ("How do you want to throw?", ("\nVelocity: ", format!("{}(m/s) @ {}°", a.speed, a.angle))),
             Action::THROWING => ("Chunk", ("", "".to_string())),
             Action::WATCHING => ("Whoa!", ("", "".to_string())),
+            Action::WINNER => ("Winner !!!", ("", "".to_string())),
         };
         text.sections[3].value = action.to_string();
         text.sections[4].value = v.0.to_string();
@@ -504,7 +526,7 @@ fn update_text_right(
     let mut text = query.single_mut();
     let v = if let Ok(velocity) = banana_query.get_single() {
         match player_turn.action {
-            Action::ENTER { .. } => "".to_string(),
+            Action::ENTER { .. } | Action::WINNER => "".to_string(),
             Action::THROWING|Action::WATCHING => format!("{}x{}", velocity.x.round(), velocity.y.round()),
         }
     } else {
