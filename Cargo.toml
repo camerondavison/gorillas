@@ -4,5 +4,31 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = "0"
 rand = "0.8.5"
+
+[dependencies.bevy]
+version = "0.7"
+default-features = false
+# These are the remaining default features other than `bevy_audio` and `mp3`
+features = [
+    "render",
+    "animation",
+    "bevy_winit",
+    "bevy_gilrs",
+    "png",
+    "hdr",
+    "filesystem_watcher",
+    "x11"
+]
+
+[dependencies.bevy_kira_audio]
+version = "0.9.0"
+# `ogg` format support is enabled by default, disable if you don't want it
+default-features = false
+# enable the features you care about
+features = [
+    "wav",
+    "flac",
+    "mp3",
+    "ogg",
+]
