@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 rand = "0.8.5"
+bevy_prototype_lyon = "0.5.0"
 
 [dependencies.bevy]
 version = "0.7"

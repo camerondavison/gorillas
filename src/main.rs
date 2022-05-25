@@ -2,10 +2,11 @@ use bevy::core::FixedTimestep;
 use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;
 use bevy::sprite::collide_aabb::collide;
+use bevy_kira_audio::{Audio, AudioPlugin, AudioSource};
+use bevy_prototype_lyon::prelude::*;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, RngCore};
 use std::f32::consts::PI;
-use bevy_kira_audio::{Audio, AudioPlugin, AudioSource};
 
 // Defines the amount of time that should elapse between each physics step.
 const TIME_STEP: f32 = 1.0 / 60.0;
@@ -19,9 +20,16 @@ const BANANA_WIDTH: f32 = 20.0;
 const BANANA_HEIGHT: f32 = 20.0;
 const GORILLA_HEIGHT: f32 = 64.0;
 const GORILLA_WIDTH: f32 = 32.0;
+const EXPLOSION_START_RADIUS: f32 = BANANA_WIDTH / 2.0;
 
 // Speeds
 const GRAVITY_Y_ACCEL: f32 = -9.8 * PIXEL_STEP_SIZE;
+
+// Z index
+const BUILDING_Z_INDEX: f32 = 1.0;
+const BANANA_Z_INDEX: f32 = 3.0;
+const GORILLA_Z_INDEX: f32 = 2.0;
+const EXPLOSION_Z_INDEX: f32 = 5.0;
 
 #[derive(Component)]
 struct Building;
@@ -58,15 +66,15 @@ struct CurrentPlayersTurnText;
 
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
 enum Player {
-    ONE,
-    TWO,
+    One,
+    Two,
 }
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
 enum Action {
-    ENTER,
-    THROWING,
-    WATCHING,
-    WINNER,
+    Enter,
+    Throwing,
+    Watching,
+    Winner,
 }
 struct GameState {
     player: Player,
@@ -75,8 +83,8 @@ struct GameState {
 impl Default for GameState {
     fn default() -> Self {
         Self {
-            player: Player::ONE,
-            action: Action::ENTER,
+            player: Player::One,
+            action: Action::Enter,
         }
     }
 }
@@ -104,6 +112,9 @@ struct Name(String);
 
 struct ExplosionSound(Handle<AudioSource>);
 
+#[derive(Component)]
+struct Explosion;
+
 fn main() {
     let background_color: Color = Color::rgb_u8(126, 161, 219); //cornflower blue
 
@@ -119,6 +130,7 @@ fn main() {
         .init_resource::<GameState>()
         .add_plugins(DefaultPlugins)
         .add_plugin(AudioPlugin)
+        .add_plugin(ShapePlugin)
         .add_startup_system(setup)
         .add_event::<CollisionEvent>()
         .add_system(change_action)
@@ -130,7 +142,8 @@ fn main() {
                 .with_system(check_for_collisions)
                 .with_system(apply_acceleration.before(check_for_collisions))
                 .with_system(apply_velocity.before(check_for_collisions))
-                .with_system(play_collision_sound.after(check_for_collisions)),
+                .with_system(play_collision_sound.after(check_for_collisions))
+                .with_system(animate_explosion.after(check_for_collisions)),
         )
         .add_system(update_text_left)
         .add_system(update_text_right)
@@ -288,18 +301,18 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         let gorilla_color = Color::DARK_GREEN;
         if i == 0 || i == num_buildings - 1 {
             let (c, n) = if i == 0 {
-                (Gorilla(Player::ONE), "Player 1")
+                (Gorilla(Player::One), "Player 1")
             } else {
-                (Gorilla(Player::TWO), "Player 2")
+                (Gorilla(Player::Two), "Player 2")
             };
 
+            let gorilla_y = start_bottom + height + GORILLA_HEIGHT / 2.0;
             commands
                 .spawn()
                 .insert(c)
                 .insert_bundle(SpriteBundle {
                     transform: Transform {
-                        translation: Vec2::new(x, start_bottom + height + GORILLA_HEIGHT / 2.0)
-                            .extend(0.0),
+                        translation: Vec2::new(x, gorilla_y).extend(GORILLA_Z_INDEX),
                         scale: Vec2::new(GORILLA_WIDTH, GORILLA_HEIGHT).extend(1.0), // scale z=1.0 in 2D
                         ..default()
                     },
@@ -357,7 +370,7 @@ fn spawn_building(
         .insert(Building)
         .insert_bundle(SpriteBundle {
             transform: Transform {
-                translation: Vec2::new(x, y).extend(0.0),
+                translation: Vec2::new(x, y).extend(BUILDING_Z_INDEX),
                 scale: Vec2::new(width, height).extend(1.0), // scale z=1.0 in 2D
                 ..default()
             },
@@ -370,10 +383,7 @@ fn spawn_building(
 fn check_for_collisions(
     mut commands: Commands,
     banana_query: Query<(Entity, &Transform), With<Banana>>,
-    collider_query: Query<
-        (Entity, &Transform, Option<&Building>, Option<&Gorilla>),
-        With<Collider>,
-    >,
+    collider_query: Query<(&Transform, Option<&Building>, Option<&Gorilla>), With<Collider>>,
     mut player_turn: ResMut<GameState>,
     mut collision_events: EventWriter<CollisionEvent>,
 ) {
@@ -385,25 +395,24 @@ fn check_for_collisions(
             commands.entity(banana_entity).despawn();
             next_player(&mut player_turn);
         } else {
-            for (_collided_entity, transform, _maybe_building, maybe_gorilla) in
-                collider_query.iter()
-            {
+            for (transform, _maybe_building, maybe_gorilla) in collider_query.iter() {
+                if let Some(gorilla) = maybe_gorilla {
+                    if gorilla.0 == player_turn.player {
+                        continue;
+                    }
+                }
                 let collision = collide(
                     banana_transform.translation,
                     banana_transform.scale.truncate(),
                     transform.translation,
                     transform.scale.truncate(),
                 );
-                if let Some(gorilla) = maybe_gorilla {
-                    if gorilla.0 == player_turn.player {
-                        continue;
-                    }
-                }
                 if collision.is_some() {
+                    spawn_explosion(banana_transform.translation.truncate(), commands.spawn());
                     collision_events.send_default();
                     commands.entity(banana_entity).despawn();
                     if maybe_gorilla.is_some() {
-                        player_turn.action = Action::WINNER;
+                        player_turn.action = Action::Winner;
                     } else {
                         next_player(&mut player_turn);
                     }
@@ -413,16 +422,50 @@ fn check_for_collisions(
     }
 }
 
-fn next_player(player_turn: &mut ResMut<GameState>) {
-    match player_turn.player {
-        Player::ONE => {
-            player_turn.player = Player::TWO;
-        }
-        Player::TWO => {
-            player_turn.player = Player::ONE;
+fn spawn_explosion(banana_pos: Vec2, mut commands: EntityCommands) {
+    let shape = shapes::RegularPolygon {
+        sides: 10,
+        feature: shapes::RegularPolygonFeature::Radius(EXPLOSION_START_RADIUS),
+        ..shapes::RegularPolygon::default()
+    };
+    commands
+        .insert(Explosion)
+        .insert_bundle(GeometryBuilder::build_as(
+            &shape,
+            DrawMode::Outlined {
+                fill_mode: FillMode::color(Color::ORANGE_RED),
+                outline_mode: StrokeMode::new(Color::BLACK, 2.0),
+            },
+            Transform {
+                translation: banana_pos.extend(EXPLOSION_Z_INDEX),
+                ..default()
+            },
+        ));
+}
+
+fn animate_explosion(
+    mut commands: Commands,
+    mut explosion_query: Query<(Entity, &Explosion, &mut Transform)>,
+) {
+    for (e, _, ref mut t) in explosion_query.iter_mut() {
+        if t.scale.x > 5.0 {
+            commands.entity(e).despawn();
+        } else {
+            t.scale *= 1.0 + 5.0 * TIME_STEP;
         }
     }
-    player_turn.action = Action::ENTER;
+}
+
+fn next_player(player_turn: &mut ResMut<GameState>) {
+    match player_turn.player {
+        Player::One => {
+            player_turn.player = Player::Two;
+        }
+        Player::Two => {
+            player_turn.player = Player::One;
+        }
+    }
+    player_turn.action = Action::Enter;
 }
 
 fn play_collision_sound(
@@ -440,26 +483,23 @@ fn change_action(
     mut query_angle_speed: Query<(&Gorilla, &mut AngleSpeed)>,
     keyboard_input: Res<Input<KeyCode>>,
 ) {
-    match player_turn.action {
-        Action::ENTER => {
-            for (g, ref mut a) in query_angle_speed.iter_mut() {
-                if g.0 == player_turn.player {
-                    if keyboard_input.just_pressed(KeyCode::Up) {
-                        a.angle += 1
-                    }
-                    if keyboard_input.just_pressed(KeyCode::Down) {
-                        a.angle -= 1
-                    }
-                    if keyboard_input.just_pressed(KeyCode::Right) {
-                        a.speed += 1
-                    }
-                    if keyboard_input.just_pressed(KeyCode::Left) {
-                        a.speed -= 1
-                    }
+    if player_turn.action == Action::Enter {
+        for (g, ref mut a) in query_angle_speed.iter_mut() {
+            if g.0 == player_turn.player {
+                if keyboard_input.just_pressed(KeyCode::Up) {
+                    a.angle += 1
+                }
+                if keyboard_input.just_pressed(KeyCode::Down) {
+                    a.angle -= 1
+                }
+                if keyboard_input.just_pressed(KeyCode::Right) {
+                    a.speed += 1
+                }
+                if keyboard_input.just_pressed(KeyCode::Left) {
+                    a.speed -= 1
                 }
             }
         }
-        _ => {}
     }
 }
 
@@ -469,38 +509,36 @@ fn throw_banana(
     gorilla_query: Query<(&Gorilla, &Transform, &AngleSpeed)>,
     mut commands: Commands,
 ) {
-    if player_turn.action == Action::ENTER {
-        if keyboard_input.just_pressed(KeyCode::Space) {
-            for (g, t, a) in gorilla_query.iter() {
-                if g.0 == player_turn.player {
-                    let angle = a.angle;
-                    let speed = a.speed;
-                    // if left alone compass loos like this, but we want to make 90 straight up
-                    // and for 100 to be behind the head
-                    //        0
-                    // 270 <- * -> 90
-                    //       180
-                    //
-                    // so we are just going to do (90 - *degrees*)
-                    // to make it go
-                    //       90
-                    // 180 <- * -> 0
-                    //       270
-                    let radians = (90 - angle) as f32 * PI / 180.0;
-                    let mut v = Vec2::new(
-                        (radians).sin() * (speed as f32),
-                        (radians).cos() * (speed as f32),
-                    );
+    if player_turn.action == Action::Enter && keyboard_input.just_pressed(KeyCode::Space) {
+        for (g, t, a) in gorilla_query.iter() {
+            if g.0 == player_turn.player {
+                let angle = a.angle;
+                let speed = a.speed;
+                // if left alone compass loos like this, but we want to make 90 straight up
+                // and for 100 to be behind the head
+                //        0
+                // 270 <- * -> 90
+                //       180
+                //
+                // so we are just going to do (90 - *degrees*)
+                // to make it go
+                //       90
+                // 180 <- * -> 0
+                //       270
+                let radians = (90 - angle) as f32 * PI / 180.0;
+                let mut v = Vec2::new(
+                    (radians).sin() * (speed as f32),
+                    (radians).cos() * (speed as f32),
+                );
 
-                    // scale, then reverse for player 2
-                    v *= PIXEL_STEP_SIZE / 1.5;
-                    if player_turn.player == Player::TWO {
-                        v.x *= -1.0
-                    }
-
-                    spawn_banana(commands.spawn(), t.translation, t.scale, v);
-                    player_turn.action = Action::THROWING;
+                // scale, then reverse for player 2
+                v *= PIXEL_STEP_SIZE / 1.5;
+                if player_turn.player == Player::Two {
+                    v.x *= -1.0
                 }
+
+                spawn_banana(commands.spawn(), t.translation.truncate(), t.scale, v);
+                player_turn.action = Action::Throwing;
             }
         }
     }
@@ -512,24 +550,24 @@ fn watch_banana(
     banana_query: Query<&Transform, With<Banana>>,
 ) {
     if let Ok(bt) = banana_query.get_single() {
-        if player_turn.action == Action::THROWING {
+        if player_turn.action == Action::Throwing {
             let mut min_distance = f32::MAX;
             for t in gorilla_query.iter() {
                 min_distance = min_distance.min(t.translation.distance(bt.translation))
             }
             if min_distance > 50.0 {
-                player_turn.action = Action::WATCHING
+                player_turn.action = Action::Watching
             }
         }
     }
 }
 
-fn spawn_banana(mut commands: EntityCommands, g_pos: Vec3, _g_size: Vec3, initial_velocity: Vec2) {
+fn spawn_banana(mut commands: EntityCommands, g_pos: Vec2, _g_size: Vec3, initial_velocity: Vec2) {
     commands
         .insert(Banana)
         .insert_bundle(SpriteBundle {
             transform: Transform {
-                translation: g_pos,
+                translation: g_pos.extend(BANANA_Z_INDEX),
                 scale: Vec2::new(BANANA_WIDTH, BANANA_HEIGHT).extend(1.0), // scale z=1.0 in 2D
                 ..default()
             },
@@ -549,18 +587,19 @@ fn update_text_left(
 ) {
     let mut text = query.single_mut();
     if let Some((_, a, n)) = name_query
-        .iter().find(|(g, _, _)| g.0 == player_turn.player)
+        .iter()
+        .find(|(g, _, _)| g.0 == player_turn.player)
     {
         text.sections[1].value = n.0.to_string();
 
         let (action, v) = match player_turn.action {
-            Action::ENTER => (
+            Action::Enter => (
                 "How do you want to throw?",
                 ("\nVelocity: ", format!("{}(m/s) @ {}°", a.speed, a.angle)),
             ),
-            Action::THROWING => ("Chunk", ("", "".to_string())),
-            Action::WATCHING => ("Whoa!", ("", "".to_string())),
-            Action::WINNER => ("Winner !!!", ("", "".to_string())),
+            Action::Throwing => ("Chunk", ("", "".to_string())),
+            Action::Watching => ("Whoa!", ("", "".to_string())),
+            Action::Winner => ("Winner !!!", ("", "".to_string())),
         };
         text.sections[3].value = action.to_string();
         text.sections[4].value = v.0.to_string();
@@ -578,8 +617,8 @@ fn update_text_right(
     let mut text = query.single_mut();
     let v = if let Ok(velocity) = banana_query.get_single() {
         match player_turn.action {
-            Action::ENTER { .. } | Action::WINNER => "".to_string(),
-            Action::THROWING | Action::WATCHING => {
+            Action::Enter | Action::Winner => "".to_string(),
+            Action::Throwing | Action::Watching => {
                 format!("{}x{}", velocity.x.round(), velocity.y.round())
             }
         }
