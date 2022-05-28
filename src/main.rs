@@ -28,9 +28,9 @@ const GRAVITY_Y_ACCEL: f32 = -9.8 * PIXEL_STEP_SIZE;
 // Z index
 const BUILDING_Z_INDEX: f32 = 1.0;
 const BANANA_Z_INDEX: f32 = 4.0;
-const GORILLA_Z_INDEX: f32 = 2.0;
-const THROW_IND_Z_INDEX: f32 = 3.0;
-const EXPLOSION_Z_INDEX: f32 = 5.0;
+const GORILLA_Z_INDEX: f32 = 10.0;
+const THROW_IND_Z_INDEX: f32 = 12.0;
+const EXPLOSION_Z_INDEX: f32 = 15.0;
 
 #[derive(Component)]
 struct Building;
@@ -265,7 +265,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     TextSection {
                         value: "".to_string(),
                         style: TextStyle {
-                            font: font_medium.clone(),
+                            font: font_medium,
                             font_size: 30.0,
                             color: Color::BLACK,
                         },
@@ -273,7 +273,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     TextSection {
                         value: " <- Banana".to_string(),
                         style: TextStyle {
-                            font: font_bold.clone(),
+                            font: font_bold,
                             font_size: 30.0,
                             color: Color::BLACK,
                         },
@@ -360,7 +360,10 @@ fn setup_arena(mut commands: Commands) {
 
     // todo: wind
     let wind = rng.next_u32() % 40;
-    commands.spawn().insert(Wind).insert(Acceleration(Vec2::new(wind as f32 - 20.0, 0.0)));
+    commands
+        .spawn()
+        .insert(Wind)
+        .insert(Acceleration(Vec2::new(wind as f32 - 20.0, 0.0)));
     // use bevy_prototype_lyon maybe? to draw wind using svg.
 }
 
@@ -504,38 +507,48 @@ fn throw_indicator(
         if player_turn.action == Action::Enter {
             for (gorilla, gorilla_as, gorilla_transform) in gorilla_query.iter() {
                 if player_turn.player == gorilla.0 {
-                    thrown_transform.translation = Vec3::new(gorilla_transform.translation.x, gorilla_transform.translation.y, THROW_IND_Z_INDEX);
+                    thrown_transform.translation = Vec3::new(
+                        gorilla_transform.translation.x,
+                        gorilla_transform.translation.y,
+                        THROW_IND_Z_INDEX,
+                    );
                     let angle = gorilla_as.angle as f32;
-                    match player_turn.player {
+                    thrown_transform.rotation = match player_turn.player {
                         // player1 is 180 == PI rotations, 90 == PI/2.0, 0 == 0
-                        Player::One => thrown_transform.rotation = Quat::from_rotation_z(angle/180.0 *PI),
+                        Player::One => Quat::from_rotation_z(angle / 180.0 * PI),
                         // player1 is 0 == PI rotations, 90 == PI/2.0, 180 == 0
-                        Player::Two => thrown_transform.rotation = Quat::from_rotation_z((180.0-angle)/180.0 *PI),
-                    }
+                        Player::Two => Quat::from_rotation_z((180.0 - angle) / 180.0 * PI),
+                    };
                     // 30 == 1.0 length, 60 == 2.0 length
                     let speed = gorilla_as.speed as f32;
-                    thrown_transform.scale.x = speed/30.0;
+                    thrown_transform.scale.x = speed / 30.0;
                 }
             }
         }
-    } else {
-        if player_turn.action == Action::PreEnter {
-            // spawn throw indicator
-            info!("spawn throw indicator");
-            commands.spawn().insert(ThrowIndicator).insert_bundle(GeometryBuilder::build_as(
+    } else if player_turn.action == Action::PreEnter {
+        // spawn throw indicator
+        info!("spawn throw indicator");
+        let outline_color: Color = *Color::ORANGE_RED.clone().set_a(0.5);
+        let fill_color: Color = *Color::ORANGE.clone().set_a(0.5);
+        commands
+            .spawn()
+            .insert(ThrowIndicator)
+            .insert_bundle(GeometryBuilder::build_as(
                 &shapes::SvgPathShape {
                     svg_doc_size_in_px: Vec2::new(60., 100.),
                     svg_path_string: "M 30 50 h 60 v -6 l 8 8 l -8 8 v -6 h -60 v -4".to_owned(),
                 },
-                DrawMode::Outlined { outline_mode: StrokeMode::color(Color::ORANGE_RED), fill_mode: FillMode::color(Color::ORANGE) },
+                DrawMode::Outlined {
+                    outline_mode: StrokeMode::color(outline_color),
+                    fill_mode: FillMode::color(fill_color),
+                },
                 Transform {
                     translation: Vec2::splat(0.0).extend(THROW_IND_Z_INDEX),
                     scale: Vec2::splat(1.0).extend(1.0),
                     ..default()
-                }
+                },
             ));
-            player_turn.action = Action::Enter
-        }
+        player_turn.action = Action::Enter
     }
 }
 
@@ -668,7 +681,7 @@ fn update_text_left(
         text.sections[1].value = n.0.to_string();
 
         let (action, v) = match player_turn.action {
-            Action::PreEnter|Action::Enter => (
+            Action::PreEnter | Action::Enter => (
                 "How do you want to throw?",
                 ("\nVelocity: ", format!("{}(m/s) @ {}°", a.speed, a.angle)),
             ),
@@ -694,7 +707,7 @@ fn update_text_right(
     text.sections[0].value = format!("{} (m/s)", wind_query.single().x);
     let v = if let Ok(velocity) = banana_query.get_single() {
         match player_turn.action {
-            Action::PreEnter|Action::Enter | Action::Winner => "".to_string(),
+            Action::PreEnter | Action::Enter | Action::Winner => "".to_string(),
             Action::Throwing | Action::Watching => {
                 format!("{}x{}", velocity.x.round(), velocity.y.round())
             }
