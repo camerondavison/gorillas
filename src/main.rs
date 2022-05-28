@@ -27,8 +27,9 @@ const GRAVITY_Y_ACCEL: f32 = -9.8 * PIXEL_STEP_SIZE;
 
 // Z index
 const BUILDING_Z_INDEX: f32 = 1.0;
-const BANANA_Z_INDEX: f32 = 3.0;
+const BANANA_Z_INDEX: f32 = 4.0;
 const GORILLA_Z_INDEX: f32 = 2.0;
+const THROW_IND_Z_INDEX: f32 = 3.0;
 const EXPLOSION_Z_INDEX: f32 = 5.0;
 
 #[derive(Component)]
@@ -71,6 +72,7 @@ enum Player {
 }
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
 enum Action {
+    PreEnter,
     Enter,
     Throwing,
     Watching,
@@ -84,7 +86,7 @@ impl Default for GameState {
     fn default() -> Self {
         Self {
             player: Player::One,
-            action: Action::Enter,
+            action: Action::PreEnter,
         }
     }
 }
@@ -97,6 +99,9 @@ struct AngleSpeed {
     angle: u8,
     speed: u8,
 }
+
+#[derive(Component)]
+struct ThrowIndicator;
 
 impl Default for AngleSpeed {
     fn default() -> Self {
@@ -132,10 +137,14 @@ fn main() {
         .add_plugin(AudioPlugin)
         .add_plugin(ShapePlugin)
         .add_startup_system(setup)
+        .add_startup_system(setup_arena)
         .add_event::<CollisionEvent>()
         .add_system(change_action)
         .add_system(throw_banana)
         .add_system(watch_banana)
+        .add_system(update_text_left)
+        .add_system(update_text_right)
+        .add_system(throw_indicator)
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
@@ -145,16 +154,11 @@ fn main() {
                 .with_system(play_collision_sound.after(check_for_collisions))
                 .with_system(animate_explosion.after(check_for_collisions)),
         )
-        .add_system(update_text_left)
-        .add_system(update_text_right)
         .add_system(bevy::input::system::exit_on_esc_system)
         .run();
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
-    // Random
-    let mut rng = thread_rng();
-
     // Cameras
     commands.spawn_bundle(OrthographicCameraBundle::new_2d());
     commands.spawn_bundle(UiCameraBundle::default());
@@ -245,7 +249,23 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     TextSection {
                         value: "".to_string(),
                         style: TextStyle {
-                            font: font_medium,
+                            font: font_medium.clone(),
+                            font_size: 30.0,
+                            color: Color::BLACK,
+                        },
+                    },
+                    TextSection {
+                        value: " <- Wind\n".to_string(),
+                        style: TextStyle {
+                            font: font_bold.clone(),
+                            font_size: 30.0,
+                            color: Color::BLACK,
+                        },
+                    },
+                    TextSection {
+                        value: "".to_string(),
+                        style: TextStyle {
+                            font: font_medium.clone(),
                             font_size: 30.0,
                             color: Color::BLACK,
                         },
@@ -253,7 +273,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     TextSection {
                         value: " <- Banana".to_string(),
                         style: TextStyle {
-                            font: font_bold,
+                            font: font_bold.clone(),
                             font_size: 30.0,
                             color: Color::BLACK,
                         },
@@ -272,6 +292,10 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             },
             ..default()
         });
+}
+fn setup_arena(mut commands: Commands) {
+    // Random
+    let mut rng = thread_rng();
 
     // Buildings
     let colors = vec![
@@ -333,8 +357,10 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         .spawn()
         .insert(Gravity)
         .insert(Acceleration(Vec2::new(0.0, GRAVITY_Y_ACCEL)));
+
     // todo: wind
-    // commands.spawn().insert(Wind).insert(Acceleration(Vec2::new(10.0, 0.0)));
+    let wind = rng.next_u32() % 40;
+    commands.spawn().insert(Wind).insert(Acceleration(Vec2::new(wind as f32 - 20.0, 0.0)));
     // use bevy_prototype_lyon maybe? to draw wind using svg.
 }
 
@@ -465,7 +491,52 @@ fn next_player(player_turn: &mut ResMut<GameState>) {
             player_turn.player = Player::One;
         }
     }
-    player_turn.action = Action::Enter;
+    player_turn.action = Action::PreEnter;
+}
+
+fn throw_indicator(
+    mut commands: Commands,
+    mut player_turn: ResMut<GameState>,
+    gorilla_query: Query<(&Gorilla, &AngleSpeed, &Transform)>,
+    mut throw_indicator_query: Query<(&ThrowIndicator, &mut Transform), Without<Gorilla>>,
+) {
+    if let Ok((_, mut thrown_transform)) = throw_indicator_query.get_single_mut() {
+        if player_turn.action == Action::Enter {
+            for (gorilla, gorilla_as, gorilla_transform) in gorilla_query.iter() {
+                if player_turn.player == gorilla.0 {
+                    thrown_transform.translation = Vec3::new(gorilla_transform.translation.x, gorilla_transform.translation.y, THROW_IND_Z_INDEX);
+                    let angle = gorilla_as.angle as f32;
+                    match player_turn.player {
+                        // player1 is 180 == PI rotations, 90 == PI/2.0, 0 == 0
+                        Player::One => thrown_transform.rotation = Quat::from_rotation_z(angle/180.0 *PI),
+                        // player1 is 0 == PI rotations, 90 == PI/2.0, 180 == 0
+                        Player::Two => thrown_transform.rotation = Quat::from_rotation_z((180.0-angle)/180.0 *PI),
+                    }
+                    // 30 == 1.0 length, 60 == 2.0 length
+                    let speed = gorilla_as.speed as f32;
+                    thrown_transform.scale.x = speed/30.0;
+                }
+            }
+        }
+    } else {
+        if player_turn.action == Action::PreEnter {
+            // spawn throw indicator
+            info!("spawn throw indicator");
+            commands.spawn().insert(ThrowIndicator).insert_bundle(GeometryBuilder::build_as(
+                &shapes::SvgPathShape {
+                    svg_doc_size_in_px: Vec2::new(60., 100.),
+                    svg_path_string: "M 30 50 h 60 v -6 l 8 8 l -8 8 v -6 h -60 v -4".to_owned(),
+                },
+                DrawMode::Outlined { outline_mode: StrokeMode::color(Color::ORANGE_RED), fill_mode: FillMode::color(Color::ORANGE) },
+                Transform {
+                    translation: Vec2::splat(0.0).extend(THROW_IND_Z_INDEX),
+                    scale: Vec2::splat(1.0).extend(1.0),
+                    ..default()
+                }
+            ));
+            player_turn.action = Action::Enter
+        }
+    }
 }
 
 fn play_collision_sound(
@@ -545,9 +616,11 @@ fn throw_banana(
 }
 
 fn watch_banana(
+    mut commands: Commands,
     mut player_turn: ResMut<GameState>,
     gorilla_query: Query<&Transform, With<Gorilla>>,
     banana_query: Query<&Transform, With<Banana>>,
+    indicator_query: Query<(Entity, &ThrowIndicator)>,
 ) {
     if let Ok(bt) = banana_query.get_single() {
         if player_turn.action == Action::Throwing {
@@ -556,7 +629,9 @@ fn watch_banana(
                 min_distance = min_distance.min(t.translation.distance(bt.translation))
             }
             if min_distance > 50.0 {
-                player_turn.action = Action::Watching
+                player_turn.action = Action::Watching;
+                let (e, _) = indicator_query.single();
+                commands.entity(e).despawn();
             }
         }
     }
@@ -593,7 +668,7 @@ fn update_text_left(
         text.sections[1].value = n.0.to_string();
 
         let (action, v) = match player_turn.action {
-            Action::Enter => (
+            Action::PreEnter|Action::Enter => (
                 "How do you want to throw?",
                 ("\nVelocity: ", format!("{}(m/s) @ {}°", a.speed, a.angle)),
             ),
@@ -613,11 +688,13 @@ fn update_text_right(
     player_turn: Res<GameState>,
     mut query: Query<&mut Text, With<RightBoard>>,
     banana_query: Query<&mut Velocity, With<Banana>>,
+    wind_query: Query<&mut Acceleration, With<Wind>>,
 ) {
     let mut text = query.single_mut();
+    text.sections[0].value = format!("{} (m/s)", wind_query.single().x);
     let v = if let Ok(velocity) = banana_query.get_single() {
         match player_turn.action {
-            Action::Enter | Action::Winner => "".to_string(),
+            Action::PreEnter|Action::Enter | Action::Winner => "".to_string(),
             Action::Throwing | Action::Watching => {
                 format!("{}x{}", velocity.x.round(), velocity.y.round())
             }
@@ -625,5 +702,5 @@ fn update_text_right(
     } else {
         "".to_string()
     };
-    text.sections[0].value = v;
+    text.sections[2].value = v;
 }
