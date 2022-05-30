@@ -1,11 +1,15 @@
+#![allow(clippy::type_complexity)]
 use bevy::core::FixedTimestep;
 use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;
 use bevy::sprite::collide_aabb::collide;
 use bevy_kira_audio::{Audio, AudioPlugin, AudioSource};
+use bevy_prototype_lyon::entity::ShapeBundle;
 use bevy_prototype_lyon::prelude::*;
+use rand::prelude::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, RngCore};
+use std::cmp;
 use std::f32::consts::PI;
 
 // Defines the amount of time that should elapse between each physics step.
@@ -31,6 +35,7 @@ const BANANA_Z_INDEX: f32 = 4.0;
 const GORILLA_Z_INDEX: f32 = 10.0;
 const THROW_IND_Z_INDEX: f32 = 12.0;
 const EXPLOSION_Z_INDEX: f32 = 15.0;
+const WIND_Z_INDEX: f32 = 20.0;
 
 #[derive(Component)]
 struct Building;
@@ -52,6 +57,9 @@ struct Velocity(Vec2);
 
 #[derive(Component)]
 struct Wind;
+
+#[derive(Component)]
+struct WindText;
 
 #[derive(Component)]
 struct Gravity;
@@ -81,12 +89,14 @@ enum Action {
 struct GameState {
     player: Player,
     action: Action,
+    key_pressed_at: f64,
 }
 impl Default for GameState {
     fn default() -> Self {
         Self {
             player: Player::One,
             action: Action::PreEnter,
+            key_pressed_at: 0f64,
         }
     }
 }
@@ -139,12 +149,12 @@ fn main() {
         .add_startup_system(setup)
         .add_startup_system(setup_arena)
         .add_event::<CollisionEvent>()
-        .add_system(change_action)
+        .add_system(world_changer)
         .add_system(throw_banana)
         .add_system(watch_banana)
         .add_system(update_text_left)
-        .add_system(update_text_right)
         .add_system(throw_indicator)
+        .add_system(change_action)
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
@@ -212,7 +222,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     TextSection {
                         value: "".to_string(),
                         style: TextStyle {
-                            font: font_bold.clone(),
+                            font: font_bold,
                             font_size: 30.0,
                             color: Color::BLACK,
                         },
@@ -220,7 +230,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     TextSection {
                         value: "".to_string(),
                         style: TextStyle {
-                            font: font_medium.clone(),
+                            font: font_medium,
                             font_size: 30.0,
                             color: Color::BLACK,
                         },
@@ -239,61 +249,9 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             },
             ..default()
         });
-
-    commands
-        .spawn()
-        .insert(RightBoard)
-        .insert_bundle(TextBundle {
-            text: Text {
-                sections: vec![
-                    TextSection {
-                        value: "".to_string(),
-                        style: TextStyle {
-                            font: font_medium.clone(),
-                            font_size: 30.0,
-                            color: Color::BLACK,
-                        },
-                    },
-                    TextSection {
-                        value: " <- Wind\n".to_string(),
-                        style: TextStyle {
-                            font: font_bold.clone(),
-                            font_size: 30.0,
-                            color: Color::BLACK,
-                        },
-                    },
-                    TextSection {
-                        value: "".to_string(),
-                        style: TextStyle {
-                            font: font_medium,
-                            font_size: 30.0,
-                            color: Color::BLACK,
-                        },
-                    },
-                    TextSection {
-                        value: " <- Banana".to_string(),
-                        style: TextStyle {
-                            font: font_bold,
-                            font_size: 30.0,
-                            color: Color::BLACK,
-                        },
-                    },
-                ],
-                ..default()
-            },
-            style: Style {
-                position_type: PositionType::Absolute,
-                position: Rect {
-                    top: Val::Px(5.0),
-                    right: Val::Px(100.0),
-                    ..default()
-                },
-                ..default()
-            },
-            ..default()
-        });
 }
-fn setup_arena(mut commands: Commands) {
+
+fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
     // Random
     let mut rng = thread_rng();
 
@@ -357,14 +315,85 @@ fn setup_arena(mut commands: Commands) {
         .spawn()
         .insert(Gravity)
         .insert(Acceleration(Vec2::new(0.0, GRAVITY_Y_ACCEL)));
+    spawn_wind_wth_accel(&mut commands, &mut rng, asset_server);
+}
 
-    // todo: wind
-    let wind = rng.next_u32() % 40;
+fn spawn_wind_wth_accel(
+    commands: &mut Commands,
+    rng: &mut ThreadRng,
+    asset_server: Res<AssetServer>,
+) -> i32 {
+    let font_medium = asset_server.load("fonts/FiraMono-Medium.ttf");
+    let wind = (rng.next_u32() % 40) as i32 - 20;
+    let raw_length = wind as i16 * 10i16;
+    let top = 50.0;
+    let right = 300.0;
+    let y = SCREEN_HEIGHT / 2.0 - top;
+    let x = SCREEN_WIDTH / 2.0 - right;
     commands
         .spawn()
         .insert(Wind)
-        .insert(Acceleration(Vec2::new(wind as f32 - 20.0, 0.0)));
-    // use bevy_prototype_lyon maybe? to draw wind using svg.
+        .insert_bundle(build_arrow_shape(
+            Color::DARK_GRAY,
+            Color::GRAY,
+            raw_length,
+            30,
+            x,
+            y,
+            WIND_Z_INDEX,
+        ))
+        .insert(Acceleration(Vec2::new(wind as f32, 0.0)));
+
+    //  todo: can we add wind text as a child of something?
+    commands.spawn().insert(WindText).insert_bundle(text_bundle(
+        font_medium,
+        top - 30.0,
+        right,
+        "wind".to_string(),
+    ));
+    wind
+}
+
+fn text_bundle(font_medium: Handle<Font>, top: f32, right: f32, value: String) -> TextBundle {
+    TextBundle {
+        text: Text {
+            sections: vec![TextSection {
+                value,
+                style: TextStyle {
+                    font: font_medium,
+                    font_size: 30.0,
+                    color: Color::BLACK,
+                },
+            }],
+            ..default()
+        },
+        style: Style {
+            position_type: PositionType::Absolute,
+            position: Rect {
+                top: Val::Px(top),
+                right: Val::Px(right),
+                ..default()
+            },
+            ..default()
+        },
+        ..default()
+    }
+}
+
+fn world_changer(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    wind_query: Query<Entity, Or<(With<Wind>, With<WindText>)>>,
+    keyboard_input: Res<Input<KeyCode>>,
+) {
+    if keyboard_input.just_pressed(KeyCode::W) {
+        for we in wind_query.iter() {
+            commands.entity(we).despawn();
+        }
+        let mut rng = thread_rng();
+        let new_wind = spawn_wind_wth_accel(&mut commands, &mut rng, asset_server);
+        info!("new wind of {}", new_wind);
+    }
 }
 
 fn apply_acceleration(
@@ -533,23 +562,55 @@ fn throw_indicator(
         commands
             .spawn()
             .insert(ThrowIndicator)
-            .insert_bundle(GeometryBuilder::build_as(
-                &shapes::SvgPathShape {
-                    svg_doc_size_in_px: Vec2::new(60., 100.),
-                    svg_path_string: "M 30 50 h 60 v -6 l 8 8 l -8 8 v -6 h -60 v -4".to_owned(),
-                },
-                DrawMode::Outlined {
-                    outline_mode: StrokeMode::color(outline_color),
-                    fill_mode: FillMode::color(fill_color),
-                },
-                Transform {
-                    translation: Vec2::splat(0.0).extend(THROW_IND_Z_INDEX),
-                    scale: Vec2::splat(1.0).extend(1.0),
-                    ..default()
-                },
+            .insert_bundle(build_arrow_shape(
+                outline_color,
+                fill_color,
+                60,
+                30,
+                0.0,
+                0.0,
+                THROW_IND_Z_INDEX,
             ));
         player_turn.action = Action::Enter
     }
+}
+
+fn build_arrow_shape(
+    outline_color: Color,
+    fill_color: Color,
+    raw_length: i16,
+    height: u16,
+    x: f32,
+    y: f32,
+    z: f32,
+) -> ShapeBundle {
+    let length = raw_length.abs() as u16;
+    let scale = if raw_length < 0 { -1.0 } else { 1.0 };
+    let svg_path_string = arrow_path(&length, height);
+    GeometryBuilder::build_as(
+        &shapes::SvgPathShape {
+            svg_doc_size_in_px: Vec2::new(length as f32, height as f32),
+            svg_path_string,
+        },
+        DrawMode::Outlined {
+            outline_mode: StrokeMode::color(outline_color),
+            fill_mode: FillMode::color(fill_color),
+        },
+        Transform {
+            translation: Vec3::new(x, y, z),
+            scale: Vec2::new(scale, 1.0).extend(1.0),
+            ..default()
+        },
+    )
+}
+
+fn arrow_path(length: &u16, height: u16) -> String {
+    let mut svg_path_string = format!("M {} {}", length / 2, height / 2);
+    svg_path_string.push_str(&format!(
+        "h {} v -6 l 8 8 l -8 8 v -6 h -{} v -4",
+        length, length
+    ));
+    svg_path_string
 }
 
 fn play_collision_sound(
@@ -563,27 +624,49 @@ fn play_collision_sound(
 }
 
 fn change_action(
-    player_turn: ResMut<GameState>,
+    time: Res<Time>,
+    mut game_state: ResMut<GameState>,
     mut query_angle_speed: Query<(&Gorilla, &mut AngleSpeed)>,
     keyboard_input: Res<Input<KeyCode>>,
 ) {
-    if player_turn.action == Action::Enter {
-        for (g, ref mut a) in query_angle_speed.iter_mut() {
-            if g.0 == player_turn.player {
-                if keyboard_input.just_pressed(KeyCode::Up) {
-                    a.angle += 1
+    if game_state.action == Action::Enter {
+        for (ref mut g, ref mut a) in query_angle_speed.iter_mut() {
+            if g.0 == game_state.player {
+                if keyboard_input.any_just_pressed([
+                    KeyCode::Up,
+                    KeyCode::Down,
+                    KeyCode::Left,
+                    KeyCode::Right,
+                ]) {
+                    game_state.key_pressed_at = time.seconds_since_startup();
+                    mutate_speed_angle(&keyboard_input, a);
                 }
-                if keyboard_input.just_pressed(KeyCode::Down) {
-                    a.angle -= 1
-                }
-                if keyboard_input.just_pressed(KeyCode::Right) {
-                    a.speed += 1
-                }
-                if keyboard_input.just_pressed(KeyCode::Left) {
-                    a.speed -= 1
+                if keyboard_input.any_pressed([
+                    KeyCode::Up,
+                    KeyCode::Down,
+                    KeyCode::Left,
+                    KeyCode::Right,
+                ]) && time.seconds_since_startup() - game_state.key_pressed_at > 0.3
+                {
+                    mutate_speed_angle(&keyboard_input, a);
                 }
             }
         }
+    }
+}
+
+fn mutate_speed_angle(keyboard_input: &Res<Input<KeyCode>>, a: &mut AngleSpeed) {
+    if keyboard_input.pressed(KeyCode::Up) {
+        a.angle = cmp::min(230, a.angle + 1);
+    }
+    if keyboard_input.pressed(KeyCode::Down) {
+        a.angle = cmp::max(0, a.angle as i16 - 1) as u8;
+    }
+    if keyboard_input.pressed(KeyCode::Right) {
+        a.speed = cmp::min(200, a.speed + 1);
+    }
+    if keyboard_input.pressed(KeyCode::Left) {
+        a.speed = cmp::max(10, a.speed - 1);
     }
 }
 
@@ -695,25 +778,4 @@ fn update_text_left(
     } else {
         error!("unable to find gorilla for player {:?}", player_turn.player)
     }
-}
-
-fn update_text_right(
-    player_turn: Res<GameState>,
-    mut query: Query<&mut Text, With<RightBoard>>,
-    banana_query: Query<&mut Velocity, With<Banana>>,
-    wind_query: Query<&mut Acceleration, With<Wind>>,
-) {
-    let mut text = query.single_mut();
-    text.sections[0].value = format!("{} (m/s)", wind_query.single().x);
-    let v = if let Ok(velocity) = banana_query.get_single() {
-        match player_turn.action {
-            Action::PreEnter | Action::Enter | Action::Winner => "".to_string(),
-            Action::Throwing | Action::Watching => {
-                format!("{}x{}", velocity.x.round(), velocity.y.round())
-            }
-        }
-    } else {
-        "".to_string()
-    };
-    text.sections[2].value = v;
 }
