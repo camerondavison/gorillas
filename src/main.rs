@@ -18,6 +18,8 @@ const PIXEL_STEP_SIZE: f32 = 10.0;
 
 // Define sizes
 const BUILDING_WIDTH: f32 = 160.0;
+const BUILDING_BRICK_WIDTH: f32 = 32.0; //20.0
+const BUILDING_BRICK_HEIGHT: f32 = 8.0; //5.0
 const SCREEN_WIDTH: f32 = 1280.0;
 const SCREEN_HEIGHT: f32 = 720.0;
 const BANANA_WIDTH: f32 = 20.0;
@@ -38,7 +40,7 @@ const EXPLOSION_Z_INDEX: f32 = 15.0;
 const WIND_Z_INDEX: f32 = 20.0;
 
 #[derive(Component)]
-struct Building;
+struct BuildingBrick;
 
 #[derive(Component)]
 struct Collider;
@@ -269,10 +271,12 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
     for i in 0..num_buildings {
         let n = i as f32;
         let height = rng.next_u32() as f32 % (SCREEN_HEIGHT / 2.0) + SCREEN_HEIGHT / 8.0;
+        let height = f32::round(height / BUILDING_BRICK_HEIGHT) * BUILDING_BRICK_HEIGHT;
         let color = *colors.choose(&mut rng).unwrap_or(&Color::BLACK);
         let x = start_left + BUILDING_WIDTH / 2.0 + (BUILDING_WIDTH * n);
         spawn_building(
-            commands.spawn(),
+            format!("b{}", i),
+            &mut commands,
             color,
             BUILDING_WIDTH,
             height,
@@ -416,35 +420,74 @@ fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>) {
 }
 
 fn spawn_building(
-    mut commands: EntityCommands,
+    name: String,
+    commands: &mut Commands,
     color: Color,
     width: f32,
     height: f32,
     x: f32,
     y: f32,
 ) {
-    info!("spawning ... {width}x{height} @ center={x},{y}");
-    commands
-        .insert(Building)
-        .insert_bundle(SpriteBundle {
-            transform: Transform {
-                translation: Vec2::new(x, y).extend(BUILDING_Z_INDEX),
-                scale: Vec2::new(width, height).extend(1.0), // scale z=1.0 in 2D
-                ..default()
-            },
-            sprite: Sprite { color, ..default() },
-            ..default()
-        })
-        .insert(Collider);
+    let num_bricks_width = f32::round(width / BUILDING_BRICK_WIDTH) as usize;
+    let num_bricks_height = f32::round(height / BUILDING_BRICK_HEIGHT) as usize;
+    debug!("spawning [{name}] ... {width}x{height} bricks {num_bricks_width}x{num_bricks_height} @ center={x},{y}");
+    for r in 0..num_bricks_height {
+        for c in 0..num_bricks_width {
+            let bx = x - (width / 2.0)
+                + (BUILDING_BRICK_WIDTH / 2.0)
+                + (c as f32 * BUILDING_BRICK_WIDTH);
+            let by = y - (height / 2.0)
+                + (BUILDING_BRICK_HEIGHT / 2.0)
+                + (r as f32 * BUILDING_BRICK_HEIGHT);
+            debug!("spawning brick for [{name}] ... center={bx},{by}");
+            commands
+                .spawn()
+                .insert(BuildingBrick)
+                .insert_bundle(SpriteBundle {
+                    transform: Transform {
+                        translation: Vec2::new(bx, by).extend(BUILDING_Z_INDEX),
+                        scale: Vec2::new(BUILDING_BRICK_WIDTH, BUILDING_BRICK_HEIGHT)
+                            .extend(1.0), // scale z=1.0 in 2D
+                        ..default()
+                    },
+                    sprite: Sprite { color, ..default() },
+                    ..default()
+                })
+                .insert(Collider);
+        }
+    }
 }
 
 fn check_for_collisions(
     mut commands: Commands,
     banana_query: Query<(Entity, &Transform), With<Banana>>,
-    collider_query: Query<(&Transform, Option<&Building>, Option<&Gorilla>), With<Collider>>,
+    explosion_query: Query<&Transform, With<Explosion>>,
+    collider_query: Query<
+        (Entity, &Transform, Option<&BuildingBrick>, Option<&Gorilla>),
+        With<Collider>,
+    >,
     mut player_turn: ResMut<GameState>,
     mut collision_events: EventWriter<CollisionEvent>,
 ) {
+    // look up if explosion has hit something
+    if let Ok(explosion_transform) = explosion_query.get_single() {
+        let mut t = explosion_transform.clone();
+        t.scale *= EXPLOSION_START_RADIUS*2.0;
+
+        despawn_from_collision_result(
+            format!("explosion"),
+            &mut commands,
+            &collider_query,
+            &mut player_turn,
+            &t,
+        );
+    }
+
+    if player_turn.action != Action::Watching {
+        return;
+    }
+
+    // look up if our banana has hit something
     if let Ok((banana_entity, banana_transform)) = banana_query.get_single() {
         // if off screen
         if banana_transform.translation.x <= -SCREEN_WIDTH / 2.0
@@ -452,41 +495,64 @@ fn check_for_collisions(
         {
             commands.entity(banana_entity).despawn();
             next_player(&mut player_turn);
-        } else {
-            for (transform, _maybe_building, maybe_gorilla) in collider_query.iter() {
-                if let Some(gorilla) = maybe_gorilla {
-                    if gorilla.0 == player_turn.player {
-                        continue;
-                    }
-                }
-                let collision = collide(
-                    banana_transform.translation,
-                    banana_transform.scale.truncate(),
-                    transform.translation,
-                    transform.scale.truncate(),
-                );
-                if collision.is_some() {
-                    spawn_explosion(banana_transform.translation.truncate(), commands.spawn());
-                    collision_events.send_default();
-                    commands.entity(banana_entity).despawn();
-                    if maybe_gorilla.is_some() {
-                        player_turn.action = Action::Winner;
-                    } else {
-                        next_player(&mut player_turn);
-                    }
-                }
-            }
+        } else if despawn_from_collision_result(
+            format!("banana"),
+            &mut commands,
+            &collider_query,
+            &mut player_turn,
+            banana_transform,
+        ) {
+            spawn_explosion(banana_transform.translation.truncate(), &mut commands);
+            collision_events.send_default();
+            commands.entity(banana_entity).despawn();
+            next_player(&mut player_turn);
         }
     }
 }
 
-fn spawn_explosion(banana_pos: Vec2, mut commands: EntityCommands) {
+fn despawn_from_collision_result(
+    collision_name: String,
+    commands: &mut Commands,
+    collider_query: &Query<
+        (Entity, &Transform, Option<&BuildingBrick>, Option<&Gorilla>),
+        With<Collider>,
+    >,
+    player_turn: &mut ResMut<GameState>,
+    moving_transform: &Transform,
+) -> bool {
+    let mut did_collide = false;
+
+    for (e, transform, maybe_building, maybe_gorilla) in collider_query.iter() {
+        let collision = collide(
+            moving_transform.translation,
+            moving_transform.scale.truncate(),
+            transform.translation,
+            transform.scale.truncate(),
+        );
+        if collision.is_some() {
+            did_collide = true;
+            debug!("{collision_name} collided");
+
+            if maybe_gorilla.is_some() {
+                player_turn.action = Action::Winner;
+            }
+            if maybe_building.is_some() {
+                commands.entity(e).despawn();
+            }
+        }
+    }
+
+    did_collide
+}
+
+fn spawn_explosion(banana_pos: Vec2, commands: &mut Commands) {
     let shape = shapes::RegularPolygon {
         sides: 10,
         feature: shapes::RegularPolygonFeature::Radius(EXPLOSION_START_RADIUS),
         ..shapes::RegularPolygon::default()
     };
     commands
+        .spawn()
         .insert(Explosion)
         .insert_bundle(GeometryBuilder::build_as(
             &shape,
@@ -503,9 +569,9 @@ fn spawn_explosion(banana_pos: Vec2, mut commands: EntityCommands) {
 
 fn animate_explosion(
     mut commands: Commands,
-    mut explosion_query: Query<(Entity, &Explosion, &mut Transform)>,
+    mut explosion_query: Query<(Entity, &mut Transform), With<Explosion>>,
 ) {
-    for (e, _, ref mut t) in explosion_query.iter_mut() {
+    for (e, ref mut t) in explosion_query.iter_mut() {
         if t.scale.x > 5.0 {
             commands.entity(e).despawn();
         } else {
@@ -514,25 +580,24 @@ fn animate_explosion(
     }
 }
 
-fn next_player(player_turn: &mut ResMut<GameState>) {
-    match player_turn.player {
-        Player::One => {
-            player_turn.player = Player::Two;
-        }
-        Player::Two => {
-            player_turn.player = Player::One;
-        }
+fn next_player(gs: &mut ResMut<GameState>) {
+    if gs.action != Action::Winner {
+        info!("next player, current {:?}", gs.player);
+        gs.player = match gs.player {
+            Player::One => Player::Two,
+            Player::Two => Player::One,
+        };
+        gs.action = Action::PreEnter;
     }
-    player_turn.action = Action::PreEnter;
 }
 
 fn throw_indicator(
     mut commands: Commands,
     mut player_turn: ResMut<GameState>,
     gorilla_query: Query<(&Gorilla, &AngleSpeed, &Transform)>,
-    mut throw_indicator_query: Query<(&ThrowIndicator, &mut Transform), Without<Gorilla>>,
+    mut throw_indicator_query: Query<&mut Transform, (With<ThrowIndicator>, Without<Gorilla>)>,
 ) {
-    if let Ok((_, mut thrown_transform)) = throw_indicator_query.get_single_mut() {
+    if let Ok(ref mut thrown_transform) = throw_indicator_query.get_single_mut() {
         if player_turn.action == Action::Enter {
             for (gorilla, gorilla_as, gorilla_transform) in gorilla_query.iter() {
                 if player_turn.player == gorilla.0 {
