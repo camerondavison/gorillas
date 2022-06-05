@@ -1,6 +1,5 @@
 #![allow(clippy::type_complexity)]
 use bevy::core::FixedTimestep;
-use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;
 use bevy::sprite::collide_aabb::collide;
 use bevy_kira_audio::{Audio, AudioPlugin, AudioSource};
@@ -22,8 +21,8 @@ const BUILDING_BRICK_WIDTH: f32 = 32.0; //20.0
 const BUILDING_BRICK_HEIGHT: f32 = 8.0; //5.0
 const SCREEN_WIDTH: f32 = 1280.0;
 const SCREEN_HEIGHT: f32 = 720.0;
-const BANANA_WIDTH: f32 = 20.0;
-const BANANA_HEIGHT: f32 = 20.0;
+const BANANA_WIDTH: f32 = 32.0;
+const BANANA_HEIGHT: f32 = 32.0;
 const GORILLA_HEIGHT: f32 = 64.0;
 const GORILLA_WIDTH: f32 = 32.0;
 const EXPLOSION_START_RADIUS: f32 = BANANA_WIDTH / 2.0;
@@ -56,6 +55,9 @@ struct RightBoard;
 
 #[derive(Component, Deref, DerefMut, Debug)]
 struct Velocity(Vec2);
+
+#[derive(Component, Debug)]
+struct Rotation(Quat);
 
 #[derive(Component)]
 struct Wind;
@@ -163,6 +165,7 @@ fn main() {
                 .with_system(check_for_collisions)
                 .with_system(apply_acceleration.before(check_for_collisions))
                 .with_system(apply_velocity.before(check_for_collisions))
+                .with_system(apply_rotation.before(check_for_collisions))
                 .with_system(play_collision_sound.after(check_for_collisions))
                 .with_system(animate_explosion.after(check_for_collisions)),
         )
@@ -416,6 +419,12 @@ fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>) {
     for (mut transform, velocity) in query.iter_mut() {
         transform.translation.x += velocity.x * TIME_STEP;
         transform.translation.y += velocity.y * TIME_STEP;
+    }
+}
+
+fn apply_rotation(mut query: Query<(&mut Transform, &Rotation)>) {
+    for (mut transform, rotation) in query.iter_mut() {
+        transform.rotation *= rotation.0;
     }
 }
 
@@ -736,6 +745,7 @@ fn mutate_speed_angle(keyboard_input: &Res<Input<KeyCode>>, a: &mut AngleSpeed) 
 }
 
 fn throw_banana(
+    asset_server: Res<AssetServer>,
     keyboard_input: Res<Input<KeyCode>>,
     mut player_turn: ResMut<GameState>,
     gorilla_query: Query<(&Gorilla, &Transform, &AngleSpeed)>,
@@ -769,7 +779,7 @@ fn throw_banana(
                     v.x *= -1.0
                 }
 
-                spawn_banana(commands.spawn(), t.translation.truncate(), t.scale, v);
+                spawn_banana(&asset_server, &mut commands, t.translation.truncate(), t.scale, v);
                 player_turn.action = Action::Throwing;
             }
         }
@@ -798,22 +808,21 @@ fn watch_banana(
     }
 }
 
-fn spawn_banana(mut commands: EntityCommands, g_pos: Vec2, _g_size: Vec3, initial_velocity: Vec2) {
-    commands
+fn spawn_banana(asset_server: &Res<AssetServer>, commands: &mut Commands, g_pos: Vec2, _g_size: Vec3, initial_velocity: Vec2) {
+    let banana_rotation: Quat = Quat::from_rotation_z(PI * -TIME_STEP);
+    commands.spawn()
         .insert(Banana)
         .insert_bundle(SpriteBundle {
             transform: Transform {
                 translation: g_pos.extend(BANANA_Z_INDEX),
-                scale: Vec2::new(BANANA_WIDTH, BANANA_HEIGHT).extend(1.0), // scale z=1.0 in 2D
+                scale: Vec2::new(BANANA_WIDTH/500.0, BANANA_HEIGHT/500.0).extend(1.0), // scale z=1.0 in 2D
                 ..default()
             },
-            sprite: Sprite {
-                color: Color::YELLOW,
-                ..default()
-            },
+            texture: asset_server.load("sprites/banana.png"),
             ..default()
         })
-        .insert(Velocity(initial_velocity));
+        .insert(Velocity(initial_velocity))
+        .insert(Rotation(banana_rotation));
 }
 
 fn update_text_left(
