@@ -302,13 +302,9 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
                 .insert_bundle(SpriteBundle {
                     transform: Transform {
                         translation: Vec2::new(x, gorilla_y).extend(GORILLA_Z_INDEX),
-                        scale: Vec2::new(GORILLA_WIDTH, GORILLA_HEIGHT).extend(1.0), // scale z=1.0 in 2D
                         ..default()
                     },
-                    sprite: Sprite {
-                        color: gorilla_color,
-                        ..default()
-                    },
+                    texture: asset_server.load("sprites/gorilla.png"),
                     ..default()
                 })
                 .insert(Name(n.to_string()))
