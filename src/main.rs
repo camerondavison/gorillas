@@ -302,9 +302,14 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
                 .insert_bundle(SpriteBundle {
                     transform: Transform {
                         translation: Vec2::new(x, gorilla_y).extend(GORILLA_Z_INDEX),
+                        scale: Vec2::new(GORILLA_WIDTH, GORILLA_HEIGHT).extend(1.0),
                         ..default()
                     },
                     texture: asset_server.load("sprites/gorilla.png"),
+                    sprite: Sprite {
+                        custom_size: Some(Vec2::new(1.0, 1.0)),
+                        ..default()
+                    },
                     ..default()
                 })
                 .insert(Name(n.to_string()))
@@ -499,7 +504,7 @@ fn check_for_collisions(
             || banana_transform.translation.x >= SCREEN_WIDTH / 2.0
         {
             commands.entity(banana_entity).despawn();
-            next_player(&mut player_turn);
+            next_player(&mut player_turn, Action::PreEnter);
         } else if despawn_from_collision_result(
             format!("banana"),
             &mut commands,
@@ -510,7 +515,7 @@ fn check_for_collisions(
             spawn_explosion(banana_transform.translation.truncate(), &mut commands);
             collision_events.send_default();
             commands.entity(banana_entity).despawn();
-            next_player(&mut player_turn);
+            next_player(&mut player_turn, Action::PreEnter);
         }
     }
 }
@@ -536,10 +541,10 @@ fn despawn_from_collision_result(
         );
         if collision.is_some() {
             did_collide = true;
-            debug!("{collision_name} collided");
 
             if maybe_gorilla.is_some() {
-                player_turn.action = Action::Winner;
+                next_player(player_turn, Action::Winner);
+                info!("{collision_name} collided with gorilla");
             }
             if maybe_building.is_some() {
                 commands.entity(e).despawn();
@@ -572,12 +577,14 @@ fn spawn_explosion(banana_pos: Vec2, commands: &mut Commands) {
         ));
 }
 
+const EXPLOSION_SIZE: f32 = 3.0;
+
 fn animate_explosion(
     mut commands: Commands,
     mut explosion_query: Query<(Entity, &mut Transform), With<Explosion>>,
 ) {
     for (e, ref mut t) in explosion_query.iter_mut() {
-        if t.scale.x > 5.0 {
+        if t.scale.x > EXPLOSION_SIZE {
             commands.entity(e).despawn();
         } else {
             t.scale *= 1.0 + 5.0 * TIME_STEP;
@@ -585,14 +592,14 @@ fn animate_explosion(
     }
 }
 
-fn next_player(gs: &mut ResMut<GameState>) {
+fn next_player(gs: &mut ResMut<GameState>, next_action: Action) {
     if gs.action != Action::Winner {
-        info!("next player, current {:?}", gs.player);
+        info!("next player, current is {:?}, action is {:?}", gs.player, gs.action);
         gs.player = match gs.player {
             Player::One => Player::Two,
             Player::Two => Player::One,
         };
-        gs.action = Action::PreEnter;
+        gs.action = next_action;
     }
 }
 
