@@ -1,8 +1,5 @@
 #![allow(clippy::type_complexity)]
-use bevy::core::FixedTimestep;
 use bevy::prelude::*;
-use bevy::sprite::collide_aabb::collide;
-use bevy_kira_audio::{Audio, AudioPlugin, AudioSource};
 use bevy_prototype_lyon::entity::ShapeBundle;
 use bevy_prototype_lyon::prelude::*;
 use rand::prelude::ThreadRng;
@@ -10,6 +7,9 @@ use rand::seq::SliceRandom;
 use rand::{thread_rng, RngCore};
 use std::cmp;
 use std::f32::consts::PI;
+use bevy::app::FixedMain;
+use bevy::math::bounding::{Aabb2d, IntersectsVolume};
+use bevy_kira_audio::{Audio, AudioControl, AudioPlugin, AudioSource};
 
 // Defines the amount of time that should elapse between each physics step.
 const TIME_STEP: f32 = 1.0 / 60.0;
@@ -50,9 +50,6 @@ struct Banana;
 #[derive(Component)]
 struct LeftBoard;
 
-#[derive(Component)]
-struct RightBoard;
-
 #[derive(Component, Deref, DerefMut, Debug)]
 struct Velocity(Vec2);
 
@@ -71,11 +68,8 @@ struct Gravity;
 #[derive(Component, Deref)]
 struct Acceleration(Vec2);
 
-#[derive(Default)]
+#[derive(Default, Resource, Event)]
 struct CollisionEvent;
-
-#[derive(Component)]
-struct CurrentPlayersTurnText;
 
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
 enum Player {
@@ -90,17 +84,18 @@ enum Action {
     Watching,
     Winner,
 }
+#[derive(Resource)]
 struct GameState {
     player: Player,
     action: Action,
-    key_pressed_at: f64,
+    key_pressed_at: f32,
 }
 impl Default for GameState {
     fn default() -> Self {
         Self {
             player: Player::One,
             action: Action::PreEnter,
-            key_pressed_at: 0f64,
+            key_pressed_at: 0f32,
         }
     }
 }
@@ -129,6 +124,7 @@ impl Default for AngleSpeed {
 #[derive(Component)]
 struct Name(String);
 
+#[derive(Resource)]
 struct ExplosionSound(Handle<AudioSource>);
 
 #[derive(Component)]
@@ -139,44 +135,42 @@ fn main() {
 
     App::new()
         .insert_resource(ClearColor(background_color))
-        .insert_resource(WindowDescriptor {
-            title: "Gorillas".to_string(),
-            width: SCREEN_WIDTH,
-            height: SCREEN_HEIGHT,
-            resizable: false,
-            ..Default::default()
-        })
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Gorillas".to_string(),
+                resolution: (SCREEN_WIDTH,SCREEN_HEIGHT).into(),
+                resizable: false,
+                ..default()
+            }),
+            ..default()
+        }))
         .init_resource::<GameState>()
-        .add_plugins(DefaultPlugins)
-        .add_plugin(AudioPlugin)
-        .add_plugin(ShapePlugin)
-        .add_startup_system(setup)
-        .add_startup_system(setup_arena)
+        // .add_plugins(DefaultPlugins)
+        .add_plugins(AudioPlugin)
+        .add_plugins(ShapePlugin)
+        .add_systems(Startup, (setup, setup_arena))
         .add_event::<CollisionEvent>()
-        .add_system(world_changer)
-        .add_system(throw_banana)
-        .add_system(watch_banana)
-        .add_system(update_text_left)
-        .add_system(throw_indicator)
-        .add_system(change_action)
-        .add_system_set(
-            SystemSet::new()
-                .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
-                .with_system(check_for_collisions)
-                .with_system(apply_acceleration.before(check_for_collisions))
-                .with_system(apply_velocity.before(check_for_collisions))
-                .with_system(apply_rotation.before(check_for_collisions))
-                .with_system(play_collision_sound.after(check_for_collisions))
-                .with_system(animate_explosion.after(check_for_collisions)),
-        )
-        .add_system(bevy::input::system::exit_on_esc_system)
+        .add_systems(Update, (world_changer,
+        throw_banana,
+        watch_banana,
+        update_text_left,
+        throw_indicator,
+        change_action))
+        .add_systems(Update, (
+                (check_for_collisions),
+                (apply_acceleration.before(check_for_collisions)),
+                (apply_velocity.before(check_for_collisions)),
+                (apply_rotation.before(check_for_collisions)),
+                (play_collision_sound.after(check_for_collisions)),
+                (animate_explosion.after(check_for_collisions)),
+        )) // todo: run if ? .run_if(Time::<Fixed>::from_seconds(TIME_STEP as f64)))
+        .add_systems(Update, bevy::window::close_on_esc)
         .run();
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     // Cameras
-    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
-    commands.spawn_bundle(UiCameraBundle::default());
+    commands.spawn(Camera2dBundle::default());
 
     // sounds
     let explosion_sounds = asset_server.load("sounds/explosion.mp3");
@@ -187,9 +181,9 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font_medium = asset_server.load("fonts/FiraMono-Medium.ttf");
 
     commands
-        .spawn()
-        .insert(LeftBoard)
-        .insert_bundle(TextBundle {
+        .spawn((
+        LeftBoard
+        ,TextBundle {
             text: Text {
                 sections: vec![
                     TextSection {
@@ -245,15 +239,12 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             },
             style: Style {
                 position_type: PositionType::Absolute,
-                position: Rect {
                     top: Val::Px(5.0),
                     left: Val::Px(5.0),
-                    ..default()
-                },
                 ..default()
             },
             ..default()
-        });
+        }));
 }
 
 fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -287,7 +278,7 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
             start_bottom + (height / 2.0),
         );
 
-        let gorilla_color = Color::DARK_GREEN;
+        // let gorilla_color = Color::DARK_GREEN;
         if i == 0 || i == num_buildings - 1 {
             let (c, n) = if i == 0 {
                 (Gorilla(Player::One), "Player 1")
@@ -297,9 +288,8 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
 
             let gorilla_y = start_bottom + height + GORILLA_HEIGHT / 2.0;
             commands
-                .spawn()
-                .insert(c)
-                .insert_bundle(SpriteBundle {
+                .spawn((c
+                ,SpriteBundle {
                     transform: Transform {
                         translation: Vec2::new(x, gorilla_y).extend(GORILLA_Z_INDEX),
                         scale: Vec2::new(GORILLA_WIDTH, GORILLA_HEIGHT).extend(1.0),
@@ -311,18 +301,17 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
                         ..default()
                     },
                     ..default()
-                })
-                .insert(Name(n.to_string()))
-                .insert(Collider)
-                .insert(AngleSpeed::default());
+                }
+                ,Name(n.to_string())
+                ,Collider
+                ,AngleSpeed::default()));
         }
     }
 
     // World
     commands
-        .spawn()
-        .insert(Gravity)
-        .insert(Acceleration(Vec2::new(0.0, GRAVITY_Y_ACCEL)));
+        .spawn((Gravity,
+        Acceleration(Vec2::new(0.0, GRAVITY_Y_ACCEL))));
     spawn_wind_wth_accel(&mut commands, &mut rng, asset_server);
 }
 
@@ -339,9 +328,9 @@ fn spawn_wind_wth_accel(
     let y = SCREEN_HEIGHT / 2.0 - top;
     let x = SCREEN_WIDTH / 2.0 - right;
     commands
-        .spawn()
-        .insert(Wind)
-        .insert_bundle(build_arrow_shape(
+        .spawn((
+        Wind,
+        build_arrow_shape(
             Color::DARK_GRAY,
             Color::GRAY,
             raw_length,
@@ -349,16 +338,16 @@ fn spawn_wind_wth_accel(
             x,
             y,
             WIND_Z_INDEX,
-        ))
-        .insert(Acceleration(Vec2::new(wind as f32, 0.0)));
+        )
+        ,Acceleration(Vec2::new(wind as f32, 0.0))));
 
     //  todo: can we add wind text as a child of something?
-    commands.spawn().insert(WindText).insert_bundle(text_bundle(
+    commands.spawn((WindText,text_bundle(
         font_medium,
         top - 30.0,
         right,
         "wind".to_string(),
-    ));
+    )));
     wind
 }
 
@@ -377,11 +366,8 @@ fn text_bundle(font_medium: Handle<Font>, top: f32, right: f32, value: String) -
         },
         style: Style {
             position_type: PositionType::Absolute,
-            position: Rect {
                 top: Val::Px(top),
                 right: Val::Px(right),
-                ..default()
-            },
             ..default()
         },
         ..default()
@@ -392,9 +378,10 @@ fn world_changer(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     wind_query: Query<Entity, Or<(With<Wind>, With<WindText>)>>,
-    keyboard_input: Res<Input<KeyCode>>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
-    if keyboard_input.just_pressed(KeyCode::W) {
+    // FYI it is the qwerty W key not just W
+    if keyboard_input.just_pressed(KeyCode::KeyW) {
         for we in wind_query.iter() {
             commands.entity(we).despawn();
         }
@@ -451,9 +438,9 @@ fn spawn_building(
                 + (r as f32 * BUILDING_BRICK_HEIGHT);
             debug!("spawning brick for [{name}] ... center={bx},{by}");
             commands
-                .spawn()
-                .insert(BuildingBrick)
-                .insert_bundle(SpriteBundle {
+                .spawn((
+                BuildingBrick,
+                SpriteBundle {
                     transform: Transform {
                         translation: Vec2::new(bx, by).extend(BUILDING_Z_INDEX),
                         scale: Vec2::new(BUILDING_BRICK_WIDTH, BUILDING_BRICK_HEIGHT)
@@ -462,8 +449,8 @@ fn spawn_building(
                     },
                     sprite: Sprite { color, ..default() },
                     ..default()
-                })
-                .insert(Collider);
+                },
+                Collider));
         }
     }
 }
@@ -533,21 +520,20 @@ fn despawn_from_collision_result(
     let mut did_collide = false;
 
     for (e, transform, maybe_building, maybe_gorilla) in collider_query.iter() {
-        let collision = collide(
-            moving_transform.translation,
-            moving_transform.scale.truncate(),
-            transform.translation,
-            transform.scale.truncate(),
-        );
-        if collision.is_some() {
+        let collision = Aabb2d::new(
+            moving_transform.translation.truncate(),
+            moving_transform.scale.truncate()/2.0).intersects(&Aabb2d::new(
+            transform.translation.truncate(),
+            transform.scale.truncate()/2.0));
+        if collision {
             did_collide = true;
-
             if maybe_gorilla.is_some() {
                 next_player(player_turn, Action::Winner);
                 info!("{collision_name} collided with gorilla");
             }
             if maybe_building.is_some() {
                 commands.entity(e).despawn();
+                info!("{collision_name} collided with building");
             }
         }
     }
@@ -562,19 +548,15 @@ fn spawn_explosion(banana_pos: Vec2, commands: &mut Commands) {
         ..shapes::RegularPolygon::default()
     };
     commands
-        .spawn()
-        .insert(Explosion)
-        .insert_bundle(GeometryBuilder::build_as(
-            &shape,
-            DrawMode::Outlined {
-                fill_mode: FillMode::color(Color::ORANGE_RED),
-                outline_mode: StrokeMode::new(Color::BLACK, 2.0),
-            },
-            Transform {
-                translation: banana_pos.extend(EXPLOSION_Z_INDEX),
-                ..default()
-            },
-        ));
+        .spawn((Explosion,(
+                           ShapeBundle {
+                               path: GeometryBuilder::build_as(&shape),
+                               spatial: SpatialBundle::from_transform(Transform::from_translation(banana_pos.extend(EXPLOSION_Z_INDEX))),
+                               ..default()
+                           },
+                           Fill::color(Color::ORANGE_RED),
+                           Stroke::new(Color::BLACK, 2.0),
+        )));
 }
 
 const EXPLOSION_SIZE: f32 = 3.0;
@@ -637,9 +619,8 @@ fn throw_indicator(
         let outline_color: Color = *Color::ORANGE_RED.clone().set_a(0.5);
         let fill_color: Color = *Color::ORANGE.clone().set_a(0.5);
         commands
-            .spawn()
-            .insert(ThrowIndicator)
-            .insert_bundle(build_arrow_shape(
+            .spawn((ThrowIndicator,
+            build_arrow_shape(
                 outline_color,
                 fill_color,
                 60,
@@ -647,7 +628,7 @@ fn throw_indicator(
                 0.0,
                 0.0,
                 THROW_IND_Z_INDEX,
-            ));
+            )));
         player_turn.action = Action::Enter
     }
 }
@@ -660,24 +641,23 @@ fn build_arrow_shape(
     x: f32,
     y: f32,
     z: f32,
-) -> ShapeBundle {
+) -> impl Bundle {
     let length = raw_length.abs() as u16;
     let scale = if raw_length < 0 { -1.0 } else { 1.0 };
     let svg_path_string = arrow_path(&length, height);
-    GeometryBuilder::build_as(
+    (ShapeBundle {
+        path: GeometryBuilder::build_as(
         &shapes::SvgPathShape {
             svg_doc_size_in_px: Vec2::new(length as f32, height as f32),
             svg_path_string,
-        },
-        DrawMode::Outlined {
-            outline_mode: StrokeMode::color(outline_color),
-            fill_mode: FillMode::color(fill_color),
-        },
-        Transform {
-            translation: Vec3::new(x, y, z),
-            scale: Vec2::new(scale, 1.0).extend(1.0),
-            ..default()
-        },
+        }),
+        spatial: SpatialBundle::from_transform(
+            Transform::from_translation(Vec3::new(x, y, z)).with_scale(Vec2::new(scale, 1.0).extend(1.0))
+        ),
+        ..default()
+    },
+     Fill::color(fill_color),
+     Stroke::color(outline_color),
     )
 }
 
@@ -695,7 +675,7 @@ fn play_collision_sound(
     audio: Res<Audio>,
     sound: Res<ExplosionSound>,
 ) {
-    if collision_events.iter().count() > 0 {
+    if collision_events.read().count() > 0 {
         audio.play(sound.0.clone());
     }
 }
@@ -704,26 +684,26 @@ fn change_action(
     time: Res<Time>,
     mut game_state: ResMut<GameState>,
     mut query_angle_speed: Query<(&Gorilla, &mut AngleSpeed)>,
-    keyboard_input: Res<Input<KeyCode>>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
     if game_state.action == Action::Enter {
         for (ref mut g, ref mut a) in query_angle_speed.iter_mut() {
             if g.0 == game_state.player {
                 if keyboard_input.any_just_pressed([
-                    KeyCode::Up,
-                    KeyCode::Down,
-                    KeyCode::Left,
-                    KeyCode::Right,
+                    KeyCode::ArrowUp,
+                    KeyCode::ArrowDown,
+                    KeyCode::ArrowLeft,
+                    KeyCode::ArrowRight,
                 ]) {
-                    game_state.key_pressed_at = time.seconds_since_startup();
+                    game_state.key_pressed_at = time.elapsed_seconds();
                     mutate_speed_angle(&keyboard_input, a);
                 }
                 if keyboard_input.any_pressed([
-                    KeyCode::Up,
-                    KeyCode::Down,
-                    KeyCode::Left,
-                    KeyCode::Right,
-                ]) && time.seconds_since_startup() - game_state.key_pressed_at > 0.3
+                    KeyCode::ArrowUp,
+                    KeyCode::ArrowDown,
+                    KeyCode::ArrowLeft,
+                    KeyCode::ArrowRight,
+                ]) && time.elapsed_seconds() - game_state.key_pressed_at > 0.3
                 {
                     mutate_speed_angle(&keyboard_input, a);
                 }
@@ -732,24 +712,24 @@ fn change_action(
     }
 }
 
-fn mutate_speed_angle(keyboard_input: &Res<Input<KeyCode>>, a: &mut AngleSpeed) {
-    if keyboard_input.pressed(KeyCode::Up) {
+fn mutate_speed_angle(keyboard_input: &Res<ButtonInput<KeyCode>>, a: &mut AngleSpeed) {
+    if keyboard_input.pressed(KeyCode::ArrowUp) {
         a.angle = cmp::min(230, a.angle + 1);
     }
-    if keyboard_input.pressed(KeyCode::Down) {
+    if keyboard_input.pressed(KeyCode::ArrowDown) {
         a.angle = cmp::max(0, a.angle as i16 - 1) as u8;
     }
-    if keyboard_input.pressed(KeyCode::Right) {
+    if keyboard_input.pressed(KeyCode::ArrowRight) {
         a.speed = cmp::min(200, a.speed + 1);
     }
-    if keyboard_input.pressed(KeyCode::Left) {
+    if keyboard_input.pressed(KeyCode::ArrowLeft) {
         a.speed = cmp::max(10, a.speed - 1);
     }
 }
 
 fn throw_banana(
     asset_server: Res<AssetServer>,
-    keyboard_input: Res<Input<KeyCode>>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
     mut player_turn: ResMut<GameState>,
     gorilla_query: Query<(&Gorilla, &Transform, &AngleSpeed)>,
     mut commands: Commands,
@@ -813,9 +793,8 @@ fn watch_banana(
 
 fn spawn_banana(asset_server: &Res<AssetServer>, commands: &mut Commands, g_pos: Vec2, _g_size: Vec3, initial_velocity: Vec2) {
     let banana_rotation: Quat = Quat::from_rotation_z(PI * -TIME_STEP);
-    commands.spawn()
-        .insert(Banana)
-        .insert_bundle(SpriteBundle {
+    commands.spawn((Banana
+        ,SpriteBundle {
             transform: Transform {
                 translation: g_pos.extend(BANANA_Z_INDEX),
                 scale: Vec2::new(BANANA_WIDTH/500.0, BANANA_HEIGHT/500.0).extend(1.0), // scale z=1.0 in 2D
@@ -823,9 +802,9 @@ fn spawn_banana(asset_server: &Res<AssetServer>, commands: &mut Commands, g_pos:
             },
             texture: asset_server.load("sprites/banana.png"),
             ..default()
-        })
-        .insert(Velocity(initial_velocity))
-        .insert(Rotation(banana_rotation));
+        }
+        ,Velocity(initial_velocity)
+        ,Rotation(banana_rotation)));
 }
 
 fn update_text_left(
