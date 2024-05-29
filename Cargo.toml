@@ -5,17 +5,6 @@ edition = "2021"
 
 [dependencies]
 rand = "0.8.5"
+bevy = "0.13.2"
 bevy_prototype_lyon = "0.11.0"
-
-[dependencies.bevy]
-version = "0.13.2"
-features = ["bevy_winit"]
-
-[dependencies.bevy_kira_audio]
-version = "0.19.0"
-features = [
-    "wav",
-    "flac",
-    "mp3",
-    "ogg",
-]
+bevy_kira_audio = {version = "0.19.0", default-features = false, features = ["mp3"]}
