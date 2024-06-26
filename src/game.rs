@@ -1,23 +1,20 @@
 #![allow(clippy::type_complexity)]
-use bevy::math::bounding::{Aabb2d, IntersectsVolume};
 
-use crate::players::PlayersPlugin;
-use crate::prelude::*;
-
-use crate::arrow;
-use crate::physics::PhysicsPlugin;
-use crate::wind::WindPlugin;
-use rand::seq::SliceRandom;
-use rand::{thread_rng, RngCore};
 use std::cmp;
 use std::f32::consts::PI;
 use std::time::Duration;
 
-#[derive(Component)]
-struct BuildingBrick;
+use rand::seq::SliceRandom;
+use rand::{thread_rng, RngCore};
+
+use crate::arrow;
+use crate::physics::PhysicsPlugin;
+use crate::players::PlayersPlugin;
+use crate::prelude::*;
+use crate::wind::WindPlugin;
 
 #[derive(Component)]
-struct Collider;
+pub(crate) struct BuildingBrick;
 
 #[derive(Component)]
 struct LeftBoard;
@@ -50,13 +47,14 @@ impl Default for AngleSpeed {
 }
 
 #[derive(Component)]
-struct Explosion;
+pub(crate) struct Explosion;
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum InGameplaySet {
     Watchers,
     Gorillas,
     Collisions,
+    TurnChanges,
     Movement,
 }
 
@@ -88,22 +86,23 @@ impl Plugin for GamePlugin {
         // set ordering
         .configure_sets(
             Update,
-            InGameplaySet::Gorillas.run_if(in_state(Action::Enter)),
+            (
+                InGameplaySet::Gorillas.run_if(in_state(Action::Enter)),
+                InGameplaySet::TurnChanges.after(InGameplaySet::Collisions),
+            ),
         )
         // Update
         .add_systems(
             Update,
             (
-                (state_watcher, update_text_left).in_set(InGameplaySet::Watchers),
+                (state_logger, update_text_left).in_set(InGameplaySet::Watchers),
                 (throw_indicator, rotate_and_change_velocity).in_set(InGameplaySet::Gorillas),
+                (animate_explosion,).in_set(InGameplaySet::Collisions),
                 (
-                    check_for_gone_event.run_if(in_state(Action::Watching)),
-                    check_for_collisions_explosion,
-                    check_for_collisions_banana.run_if(in_state(Action::Watching)),
-                    animate_explosion,
+                    next_player_system.run_if(in_state(Action::Watching)),
+                    winner_player_system,
                 )
-                    .chain()
-                    .in_set(InGameplaySet::Collisions),
+                    .in_set(InGameplaySet::TurnChanges),
             ),
         )
         .add_systems(OnEnter(Action::Enter), spawn_throw_indicator)
@@ -253,14 +252,14 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
                     },
                     ..default()
                 },
-                Collider,
                 AngleSpeed::default(),
+                Collider,
             ));
         }
     }
 }
 
-fn state_watcher(mut action_change: EventReader<StateTransitionEvent<Action>>) {
+fn state_logger(mut action_change: EventReader<StateTransitionEvent<Action>>) {
     for chg in action_change.read() {
         info!("Saw state change from {:?} to {:?}", chg.before, chg.after);
     }
@@ -304,171 +303,6 @@ fn spawn_building(
     }
 }
 
-fn check_for_collisions_explosion(
-    mut commands: Commands,
-    explosion_query: Query<&Transform, With<Explosion>>,
-    collider_query: Query<
-        (Entity, &Transform, Option<&BuildingBrick>, Option<&Gorilla>),
-        With<Collider>,
-    >,
-    action: Res<State<Action>>,
-    mut next_action: ResMut<NextState<Action>>,
-    player: Res<State<Player>>,
-    mut next_player: ResMut<NextState<Player>>,
-) {
-    // look up if explosion has hit something
-    if let Ok(explosion_transform) = explosion_query.get_single() {
-        let mut t = explosion_transform.clone();
-        t.scale *= EXPLOSION_START_RADIUS * 2.0;
-
-        despawn_from_collision_result(
-            format!("explosion"),
-            &mut commands,
-            &collider_query,
-            &t,
-            &action,
-            &mut next_action,
-            &player,
-            &mut next_player,
-        );
-    }
-}
-
-fn check_for_gone_event(
-    banana_query: Query<Entity, With<Banana>>,
-    events: EventReader<BananaGoneEvent>,
-    action: Res<State<Action>>,
-    mut next_action: ResMut<NextState<Action>>,
-    player: Res<State<Player>>,
-    mut next_player: ResMut<NextState<Player>>,
-) {
-    if !events.is_empty() {
-        if banana_query.is_empty() {
-            // there are no more bananas
-            next_player_system(
-                &action,
-                &mut next_action,
-                &player,
-                &mut next_player,
-                Action::Enter,
-            );
-        }
-    }
-}
-
-fn check_for_collisions_banana(
-    mut commands: Commands,
-    banana_query: Query<(Entity, &Transform), With<Banana>>,
-    collider_query: Query<
-        (Entity, &Transform, Option<&BuildingBrick>, Option<&Gorilla>),
-        With<Collider>,
-    >,
-    mut collision_events: EventWriter<CollisionEvent>,
-    action: Res<State<Action>>,
-    mut next_action: ResMut<NextState<Action>>,
-    player: Res<State<Player>>,
-    mut next_player: ResMut<NextState<Player>>,
-) {
-    // look up if our banana has hit something
-    if let Ok((banana_entity, banana_transform)) = banana_query.get_single() {
-        if despawn_from_collision_result(
-            format!("banana"),
-            &mut commands,
-            &collider_query,
-            banana_transform,
-            &action,
-            &mut next_action,
-            &player,
-            &mut next_player,
-        ) {
-            spawn_explosion(banana_transform.translation.truncate(), &mut commands);
-            collision_events.send_default();
-            commands.entity(banana_entity).despawn();
-            next_player_system(
-                &action,
-                &mut next_action,
-                &player,
-                &mut next_player,
-                Action::Enter,
-            );
-        }
-    }
-}
-
-fn despawn_from_collision_result(
-    collision_name: String,
-    commands: &mut Commands,
-    collider_query: &Query<
-        (Entity, &Transform, Option<&BuildingBrick>, Option<&Gorilla>),
-        With<Collider>,
-    >,
-    moving_transform: &Transform,
-    action: &Res<State<Action>>,
-    mut next_action: &mut ResMut<NextState<Action>>,
-    player: &Res<State<Player>>,
-    mut next_player: &mut ResMut<NextState<Player>>,
-) -> bool {
-    let mut did_collide = false;
-    let mut did_collide_with_gorilla = false;
-
-    for (e, transform, maybe_building, maybe_gorilla) in collider_query.iter() {
-        let collision = Aabb2d::new(
-            moving_transform.translation.truncate(),
-            moving_transform.scale.truncate() / 2.0,
-        )
-        .intersects(&Aabb2d::new(
-            transform.translation.truncate(),
-            transform.scale.truncate() / 2.0,
-        ));
-        if collision {
-            did_collide = true;
-            if maybe_gorilla.is_some() {
-                did_collide_with_gorilla = true;
-                info!("{collision_name} collided with gorilla");
-            }
-            if maybe_building.is_some() {
-                commands.entity(e).despawn();
-                info!("{collision_name} collided with building");
-            }
-        }
-    }
-    if did_collide_with_gorilla {
-        next_player_system(
-            &action,
-            &mut next_action,
-            &player,
-            &mut next_player,
-            Action::Winner,
-        );
-    }
-
-    did_collide
-}
-
-fn spawn_explosion(banana_pos: Vec2, commands: &mut Commands) {
-    let shape = shapes::RegularPolygon {
-        sides: 10,
-        feature: shapes::RegularPolygonFeature::Radius(EXPLOSION_START_RADIUS),
-        ..shapes::RegularPolygon::default()
-    };
-    commands.spawn((
-        Explosion,
-        (
-            ShapeBundle {
-                path: GeometryBuilder::build_as(&shape),
-                spatial: SpatialBundle::from_transform(Transform::from_translation(
-                    banana_pos.extend(EXPLOSION_Z_INDEX),
-                )),
-                ..default()
-            },
-            Fill::color(Color::ORANGE_RED),
-            Stroke::new(Color::BLACK, 2.0),
-        ),
-    ));
-}
-
-const EXPLOSION_SIZE: f32 = 3.0;
-
 fn animate_explosion(
     mut commands: Commands,
     mut explosion_query: Query<(Entity, &mut Transform), With<Explosion>>,
@@ -482,15 +316,31 @@ fn animate_explosion(
     }
 }
 
-fn next_player_system(
-    action: &Res<State<Action>>,
-    next_action: &mut ResMut<NextState<Action>>,
-    player: &Res<State<Player>>,
-    next_player: &mut ResMut<NextState<Player>>,
-    set_next_action: Action,
+fn winner_player_system(
+    mut next_action: ResMut<NextState<Action>>,
+    mut next_player: ResMut<NextState<Player>>,
+    mut gorilla_collision_event: EventReader<GorillaCollisionEvent>,
 ) {
-    if action.get() != &Action::Winner {
-        // todo: make if in system?
+    for event in gorilla_collision_event.read() {
+        info!("saw gorilla collision on {:?}", &event.player);
+        // set the winner to the other player
+        next_player.set(match event.player {
+            Player::One => Player::Two,
+            Player::Two => Player::One,
+        });
+        next_action.set(Action::Winner);
+    }
+}
+
+fn next_player_system(
+    action: Res<State<Action>>,
+    mut next_action: ResMut<NextState<Action>>,
+    player: Res<State<Player>>,
+    mut next_player: ResMut<NextState<Player>>,
+    banana_collision_event: EventReader<BananaCollisionEvent>,
+    banana_gone_event: EventReader<BananaGoneEvent>,
+) {
+    if !banana_collision_event.is_empty() || !banana_gone_event.is_empty() {
         info!(
             "next player, current is {:?}, action is {:?}",
             player, action
@@ -499,9 +349,10 @@ fn next_player_system(
             Player::One => Player::Two,
             Player::Two => Player::One,
         });
-        next_action.set(set_next_action);
+        next_action.set(Action::Enter);
     }
 }
+
 fn spawn_throw_indicator(mut commands: Commands, mut next_action: ResMut<NextState<Action>>) {
     // spawn throw indicator
     info!("spawn throw indicator");

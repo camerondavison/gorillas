@@ -13,6 +13,7 @@ pub const BANANA_HEIGHT: f32 = 32.0;
 pub const GORILLA_HEIGHT: f32 = 64.0;
 pub const GORILLA_WIDTH: f32 = 32.0;
 pub const EXPLOSION_START_RADIUS: f32 = BANANA_WIDTH / 2.0;
+pub const EXPLOSION_SIZE: f32 = 3.0;
 
 // Speeds
 pub const GRAVITY_Y_ACCEL: f32 = -9.8 * PIXEL_STEP_SIZE;

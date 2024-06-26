@@ -6,7 +6,9 @@ use crate::game::{Action, AngleSpeed};
 use crate::prelude::*;
 
 #[derive(Component)]
-pub(crate) struct Banana;
+pub(crate) struct Banana {
+    thrown_by: Player
+}
 
 #[derive(Resource, Event)]
 pub(crate) struct BananaGoneEvent;
@@ -60,7 +62,7 @@ fn throw_banana(
             if player.get() == &Player::Two {
                 v.x *= -1.0
             }
-            spawn_banana(&asset_server, &mut commands, t.translation.truncate(), v);
+            spawn_banana(&asset_server, player.clone(), &mut commands, t.translation.truncate(), v);
             next_action.set(Action::Throwing);
         }
     }
@@ -68,14 +70,16 @@ fn throw_banana(
 
 fn transition_to_watching_banana(
     mut next_action: ResMut<NextState<Action>>,
-    gorilla_query: Query<&Transform, With<Gorilla>>,
-    banana_query: Query<&Transform, With<Banana>>,
+    gorilla_query: Query<(&Transform, &Gorilla)>,
+    banana_query: Query<(&Transform, &Banana)>,
 ) {
-    if let Ok(bt) = banana_query.get_single() {
+    for (bt, b) in banana_query.iter() {
+        // if any banana is far away from the gorilla set us into watching state
         let mut min_distance = f32::MAX;
-        // todo: this is a little wrong because it is finding the distance to both gorillas
-        for t in gorilla_query.iter() {
-            min_distance = min_distance.min(t.translation.distance(bt.translation))
+        for (gt, g) in gorilla_query.iter() {
+            if g.player == b.thrown_by {
+                min_distance = min_distance.min(gt.translation.distance(bt.translation))
+            }
         }
         if min_distance > 50.0 {
             next_action.set(Action::Watching);
@@ -85,13 +89,16 @@ fn transition_to_watching_banana(
 
 fn spawn_banana(
     asset_server: &Res<AssetServer>,
+    player: Player,
     commands: &mut Commands,
     g_pos: Vec2,
     initial_velocity: Vec2,
 ) {
     let banana_rotation: Quat = Quat::from_rotation_z(PI * -TIME_STEP);
     commands.spawn((
-        Banana,
+        Banana {
+            thrown_by: player,
+        },
         SpriteBundle {
             transform: Transform {
                 translation: g_pos.extend(BANANA_Z_INDEX),

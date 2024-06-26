@@ -23,11 +23,12 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 }
 
 fn play_collision_sound(
-    mut collision_events: EventReader<CollisionEvent>,
+    mut collision_events: EventReader<BananaCollisionEvent>,
     audio: Res<Audio>,
     sound: Res<ExplosionSound>,
 ) {
-    if collision_events.read().count() > 0 {
+    for evt in collision_events.read() {
+        info!("play sound for {:?}", evt);
         audio.play(sound.0.clone());
     }
 }
