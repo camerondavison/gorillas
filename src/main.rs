@@ -4,6 +4,7 @@ mod prelude;
 mod game;
 mod audio;
 mod collision;
+mod players;
 
 fn main() {
     App::new()

@@ -6,6 +6,8 @@ use rand::seq::SliceRandom;
 use rand::{RngCore, thread_rng};
 use std::cmp;
 use std::f32::consts::PI;
+use std::time::Duration;
+use crate::players::PlayersPlugin;
 use crate::prelude::*;
 
 #[derive(Component)]
@@ -38,37 +40,15 @@ struct Gravity;
 #[derive(Component, Deref)]
 struct Acceleration(Vec2);
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
-enum Player {
-    One,
-    Two,
-}
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, States, Clone, Hash, Default, Ord, PartialOrd, Eq, PartialEq)]
 enum Action {
+    #[default]
     PreEnter,
     Enter,
     Throwing,
     Watching,
     Winner,
 }
-#[derive(Resource)]
-struct GameState {
-    player: Player,
-    action: Action,
-    key_pressed_at: f32,
-}
-impl Default for GameState {
-    fn default() -> Self {
-        Self {
-            player: Player::One,
-            action: Action::PreEnter,
-            key_pressed_at: 0f32,
-        }
-    }
-}
-
-#[derive(Component)]
-struct Gorilla(Player);
 
 #[derive(Component)]
 struct AngleSpeed {
@@ -113,9 +93,10 @@ impl Plugin for GamePlugin {
                 }),
                 ..default()
             }))
-            .init_resource::<GameState>()
             .add_plugins(audio::GorillasAudioPlugin)
             .add_plugins(CollisionPlugin)
+            .add_plugins(PlayersPlugin)
+            .init_state::<Action>()
             .add_plugins(ShapePlugin)
             .add_systems(Startup, (setup, setup_arena))
             .add_systems(
@@ -126,17 +107,17 @@ impl Plugin for GamePlugin {
                     watch_banana,
                     update_text_left,
                     throw_indicator,
-                    change_action,
+                    state_watcher,
+                    change_action.run_if(in_state(Action::Enter)),
                 ),
             )
             .add_systems(
                 Update,
                 (
-                    (check_for_collisions),
-                    (apply_acceleration.before(check_for_collisions)),
-                    (apply_velocity.before(check_for_collisions)),
-                    (apply_rotation.before(check_for_collisions)),
-                    (animate_explosion.after(check_for_collisions)),
+                    (apply_acceleration, apply_velocity, apply_rotation),
+                    check_for_collisions_explosion,
+                    check_for_collisions_banana.run_if(in_state(Action::Watching)),
+                    animate_explosion,
                 ),
             )
             .add_systems(Update, bevy::window::close_on_esc);
@@ -285,6 +266,12 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
     spawn_wind_wth_accel(&mut commands, &mut rng, asset_server);
 }
 
+fn state_watcher(mut action_change: EventReader<StateTransitionEvent<Action>>) {
+    for chg in action_change.read() {
+        info!("Saw state change from {:?} to {:?}", chg.before, chg.after);
+    }
+}
+
 fn spawn_wind_wth_accel(
     commands: &mut Commands,
     rng: &mut ThreadRng,
@@ -422,7 +409,7 @@ fn spawn_building(
     }
 }
 
-fn check_for_collisions(
+fn check_for_collisions_explosion(
     mut commands: Commands,
     banana_query: Query<(Entity, &Transform), With<Banana>>,
     explosion_query: Query<&Transform, With<Explosion>>,
@@ -430,8 +417,11 @@ fn check_for_collisions(
         (Entity, &Transform, Option<&BuildingBrick>, Option<&Gorilla>),
         With<Collider>,
     >,
-    mut player_turn: ResMut<GameState>,
     mut collision_events: EventWriter<CollisionEvent>,
+    action: Res<State<Action>>,
+    mut next_action: ResMut<NextState<Action>>,
+    player: Res<State<Player>>,
+    mut next_player: ResMut<NextState<Player>>,
 ) {
     // look up if explosion has hit something
     if let Ok(explosion_transform) = explosion_query.get_single() {
@@ -442,15 +432,26 @@ fn check_for_collisions(
             format!("explosion"),
             &mut commands,
             &collider_query,
-            &mut player_turn,
             &t,
+            &action, &mut next_action, &player, &mut next_player
         );
     }
+}
 
-    if player_turn.action != Action::Watching {
-        return;
-    }
-
+fn check_for_collisions_banana(
+    mut commands: Commands,
+    banana_query: Query<(Entity, &Transform), With<Banana>>,
+    explosion_query: Query<&Transform, With<Explosion>>,
+    collider_query: Query<
+        (Entity, &Transform, Option<&BuildingBrick>, Option<&Gorilla>),
+        With<Collider>,
+    >,
+    mut collision_events: EventWriter<CollisionEvent>,
+    action: Res<State<Action>>,
+    mut next_action: ResMut<NextState<Action>>,
+    player: Res<State<Player>>,
+    mut next_player: ResMut<NextState<Player>>,
+) {
     // look up if our banana has hit something
     if let Ok((banana_entity, banana_transform)) = banana_query.get_single() {
         // if off screen
@@ -458,18 +459,18 @@ fn check_for_collisions(
             || banana_transform.translation.x >= SCREEN_WIDTH / 2.0
         {
             commands.entity(banana_entity).despawn();
-            next_player(&mut player_turn, Action::PreEnter);
+            next_player_system(&action, &mut next_action, &player, &mut next_player, Action::PreEnter);
         } else if despawn_from_collision_result(
             format!("banana"),
             &mut commands,
             &collider_query,
-            &mut player_turn,
             banana_transform,
+            &action, &mut next_action, &player, &mut next_player
         ) {
             spawn_explosion(banana_transform.translation.truncate(), &mut commands);
             collision_events.send_default();
             commands.entity(banana_entity).despawn();
-            next_player(&mut player_turn, Action::PreEnter);
+            next_player_system(&action, &mut next_action, &player, &mut next_player, Action::PreEnter);
         }
     }
 }
@@ -481,10 +482,14 @@ fn despawn_from_collision_result(
         (Entity, &Transform, Option<&BuildingBrick>, Option<&Gorilla>),
         With<Collider>,
     >,
-    player_turn: &mut ResMut<GameState>,
     moving_transform: &Transform,
+    action: &Res<State<Action>>,
+    mut next_action: &mut ResMut<NextState<Action>>,
+    player: &Res<State<Player>>,
+    mut next_player: &mut ResMut<NextState<Player>>,
 ) -> bool {
     let mut did_collide = false;
+    let mut did_collide_with_gorilla = false;
 
     for (e, transform, maybe_building, maybe_gorilla) in collider_query.iter() {
         let collision = Aabb2d::new(
@@ -498,7 +503,7 @@ fn despawn_from_collision_result(
         if collision {
             did_collide = true;
             if maybe_gorilla.is_some() {
-                next_player(player_turn, Action::Winner);
+                did_collide_with_gorilla = true;
                 info!("{collision_name} collided with gorilla");
             }
             if maybe_building.is_some() {
@@ -506,6 +511,9 @@ fn despawn_from_collision_result(
                 info!("{collision_name} collided with building");
             }
         }
+    }
+    if did_collide_with_gorilla {
+        next_player_system(&action, &mut next_action, &player, &mut next_player, Action::Winner);
     }
 
     did_collide
@@ -548,37 +556,44 @@ fn animate_explosion(
     }
 }
 
-fn next_player(gs: &mut ResMut<GameState>, next_action: Action) {
-    if gs.action != Action::Winner {
+fn next_player_system(action: &Res<State<Action>>,
+               next_action: &mut ResMut<NextState<Action>>,
+               player: &Res<State<Player>>,
+                next_player: &mut ResMut<NextState<Player>>,
+                   set_next_action: Action
+) {
+    if action.get() != &Action::Winner { // todo: make if in system?
         info!(
             "next player, current is {:?}, action is {:?}",
-            gs.player, gs.action
+            player, action
         );
-        gs.player = match gs.player {
+        next_player.set(match player.get() {
             Player::One => Player::Two,
             Player::Two => Player::One,
-        };
-        gs.action = next_action;
+        });
+        next_action.set(set_next_action);
     }
 }
 
 fn throw_indicator(
     mut commands: Commands,
-    mut player_turn: ResMut<GameState>,
-    gorilla_query: Query<(&Gorilla, &AngleSpeed, &Transform)>,
     mut throw_indicator_query: Query<&mut Transform, (With<ThrowIndicator>, Without<Gorilla>)>,
+    gorilla_query: Query<(&Gorilla, &AngleSpeed, &Transform)>,
+    action: Res<State<Action>>,
+    mut next_action: ResMut<NextState<Action>>,
+    player: Res<State<Player>>,
 ) {
     if let Ok(ref mut thrown_transform) = throw_indicator_query.get_single_mut() {
-        if player_turn.action == Action::Enter {
+        if action.get() == &Action::Enter {
             for (gorilla, gorilla_as, gorilla_transform) in gorilla_query.iter() {
-                if player_turn.player == gorilla.0 {
+                if player.get() == &gorilla.0 {
                     thrown_transform.translation = Vec3::new(
                         gorilla_transform.translation.x,
                         gorilla_transform.translation.y,
                         THROW_IND_Z_INDEX,
                     );
                     let angle = gorilla_as.angle as f32;
-                    thrown_transform.rotation = match player_turn.player {
+                    thrown_transform.rotation = match player.get() {
                         // player1 is 180 == PI rotations, 90 == PI/2.0, 0 == 0
                         Player::One => Quat::from_rotation_z(angle / 180.0 * PI),
                         // player1 is 0 == PI rotations, 90 == PI/2.0, 180 == 0
@@ -590,7 +605,7 @@ fn throw_indicator(
                 }
             }
         }
-    } else if player_turn.action == Action::PreEnter {
+    } else if action.get() == &Action::PreEnter {
         // spawn throw indicator
         info!("spawn throw indicator");
         let outline_color: Color = *Color::ORANGE_RED.clone().set_a(0.5);
@@ -607,7 +622,7 @@ fn throw_indicator(
                 THROW_IND_Z_INDEX,
             ),
         ));
-        player_turn.action = Action::Enter
+        next_action.set( Action::Enter);
     }
 }
 
@@ -649,31 +664,44 @@ fn arrow_path(length: &u16, height: u16) -> String {
     svg_path_string
 }
 
+struct MoveArrowState {
+    timer: Timer,
+}
+impl Default for MoveArrowState {
+    fn default() -> Self {
+        Self {
+            timer: Timer::new(Duration::from_millis(150), TimerMode::Once),
+        }
+    }
+}
+
 fn change_action(
     time: Res<Time>,
-    mut game_state: ResMut<GameState>,
+    player: Res<State<Player>>,
     mut query_angle_speed: Query<(&Gorilla, &mut AngleSpeed)>,
+    mut move_arrow_state: Local<MoveArrowState>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
-    if game_state.action == Action::Enter {
-        for (ref mut g, ref mut a) in query_angle_speed.iter_mut() {
-            if g.0 == game_state.player {
-                if keyboard_input.any_just_pressed([
-                    KeyCode::ArrowUp,
-                    KeyCode::ArrowDown,
-                    KeyCode::ArrowLeft,
-                    KeyCode::ArrowRight,
-                ]) {
-                    game_state.key_pressed_at = time.elapsed_seconds();
-                    mutate_speed_angle(&keyboard_input, a);
-                }
-                if keyboard_input.any_pressed([
-                    KeyCode::ArrowUp,
-                    KeyCode::ArrowDown,
-                    KeyCode::ArrowLeft,
-                    KeyCode::ArrowRight,
-                ]) && time.elapsed_seconds() - game_state.key_pressed_at > 0.3
-                {
+    for (ref mut g, ref mut a) in query_angle_speed.iter_mut() {
+        if player.get() == &g.0{
+            if keyboard_input.any_just_pressed([
+                KeyCode::ArrowUp,
+                KeyCode::ArrowDown,
+                KeyCode::ArrowLeft,
+                KeyCode::ArrowRight,
+            ]) {
+                move_arrow_state.timer.reset();
+                mutate_speed_angle(&keyboard_input, a);
+            }
+            if keyboard_input.any_pressed([
+                KeyCode::ArrowUp,
+                KeyCode::ArrowDown,
+                KeyCode::ArrowLeft,
+                KeyCode::ArrowRight,
+            ])
+            {
+                move_arrow_state.timer.tick(time.delta());
+                if move_arrow_state.timer.finished() {
                     mutate_speed_angle(&keyboard_input, a);
                 }
             }
@@ -697,15 +725,16 @@ fn mutate_speed_angle(keyboard_input: &Res<ButtonInput<KeyCode>>, a: &mut AngleS
 }
 
 fn throw_banana(
+    mut next_action: ResMut<NextState<Action>>,
+    player: Res<State<Player>>,
     asset_server: Res<AssetServer>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut player_turn: ResMut<GameState>,
     gorilla_query: Query<(&Gorilla, &Transform, &AngleSpeed)>,
     mut commands: Commands,
 ) {
-    if player_turn.action == Action::Enter && keyboard_input.just_pressed(KeyCode::Space) {
+    if keyboard_input.just_pressed(KeyCode::Space) {
         for (g, t, a) in gorilla_query.iter() {
-            if g.0 == player_turn.player {
+            if &g.0 == player.get() {
                 let angle = a.angle;
                 let speed = a.speed;
                 // if left alone compass loos like this, but we want to make 90 straight up
@@ -727,7 +756,7 @@ fn throw_banana(
 
                 // scale, then reverse for player 2
                 v *= PIXEL_STEP_SIZE / 1.5;
-                if player_turn.player == Player::Two {
+                if player.get() == &Player::Two {
                     v.x *= -1.0
                 }
 
@@ -738,7 +767,7 @@ fn throw_banana(
                     t.scale,
                     v,
                 );
-                player_turn.action = Action::Throwing;
+                next_action.set(Action::Throwing);
             }
         }
     }
@@ -746,19 +775,20 @@ fn throw_banana(
 
 fn watch_banana(
     mut commands: Commands,
-    mut player_turn: ResMut<GameState>,
+    action: Res<State<Action>>,
+    mut next_action: ResMut<NextState<Action>>,
     gorilla_query: Query<&Transform, With<Gorilla>>,
     banana_query: Query<&Transform, With<Banana>>,
     indicator_query: Query<(Entity, &ThrowIndicator)>,
 ) {
     if let Ok(bt) = banana_query.get_single() {
-        if player_turn.action == Action::Throwing {
+        if action.get() == &Action::Throwing {
             let mut min_distance = f32::MAX;
             for t in gorilla_query.iter() {
                 min_distance = min_distance.min(t.translation.distance(bt.translation))
             }
             if min_distance > 50.0 {
-                player_turn.action = Action::Watching;
+                next_action.set(Action::Watching);
                 let (e, _) = indicator_query.single();
                 commands.entity(e).despawn();
             }
@@ -791,18 +821,19 @@ fn spawn_banana(
 }
 
 fn update_text_left(
-    player_turn: Res<GameState>,
+    action: Res<State<Action>>,
+    player: Res<State<Player>>,
     mut query: Query<&mut Text, With<LeftBoard>>,
     name_query: Query<(&Gorilla, &AngleSpeed, &Name)>,
 ) {
     let mut text = query.single_mut();
     if let Some((_, a, n)) = name_query
         .iter()
-        .find(|(g, _, _)| g.0 == player_turn.player)
+        .find(|(g, _, _)| &g.0 == player.get())
     {
         text.sections[1].value = n.0.to_string();
 
-        let (action, v) = match player_turn.action {
+        let (action, v) = match action.get() {
             Action::PreEnter | Action::Enter => (
                 "How do you want to throw?",
                 ("\nVelocity: ", format!("{}(m/s) @ {}°", a.speed, a.angle)),
@@ -815,6 +846,6 @@ fn update_text_left(
         text.sections[4].value = v.0.to_string();
         text.sections[5].value = v.1;
     } else {
-        error!("unable to find gorilla for player {:?}", player_turn.player)
+        error!("unable to find gorilla for player {:?}", player.get());
     }
 }
