@@ -7,7 +7,7 @@ use crate::prelude::*;
 
 #[derive(Component)]
 pub(crate) struct Banana {
-    thrown_by: Player
+    thrown_by: Player,
 }
 
 #[derive(Resource, Event)]
@@ -62,7 +62,13 @@ fn throw_banana(
             if player.get() == &Player::Two {
                 v.x *= -1.0
             }
-            spawn_banana(&asset_server, player.clone(), &mut commands, t.translation.truncate(), v);
+            spawn_banana(
+                &asset_server,
+                player.clone(),
+                &mut commands,
+                t.translation.truncate(),
+                v,
+            );
             next_action.set(Action::Throwing);
         }
     }
@@ -96,9 +102,7 @@ fn spawn_banana(
 ) {
     let banana_rotation: Quat = Quat::from_rotation_z(PI * -TIME_STEP);
     commands.spawn((
-        Banana {
-            thrown_by: player,
-        },
+        Banana { thrown_by: player },
         SpriteBundle {
             transform: Transform {
                 translation: g_pos.extend(BANANA_Z_INDEX),

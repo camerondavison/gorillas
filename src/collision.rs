@@ -69,11 +69,8 @@ fn check_for_collisions_banana(
 ) {
     // look up if our banana has hit something
     for (banana_entity, banana_transform) in banana_query.iter() {
-        let (did_collide, _) = check_if_did_collide(
-            &mut commands,
-            &collider_query,
-            banana_transform,
-        );
+        let (did_collide, _) =
+            check_if_did_collide(&mut commands, &collider_query, banana_transform);
         if did_collide {
             info!("banana collided with something");
             collision_event.send(BananaCollisionEvent { banana_entity });
@@ -97,10 +94,10 @@ fn check_if_did_collide(
             moving_transform.translation.truncate(),
             moving_transform.scale.truncate() / 2.0,
         )
-            .intersects(&Aabb2d::new(
-                transform.translation.truncate(),
-                transform.scale.truncate() / 2.0,
-            ));
+        .intersects(&Aabb2d::new(
+            transform.translation.truncate(),
+            transform.scale.truncate() / 2.0,
+        ));
         if collision {
             did_collide = true;
             if let Some(g) = maybe_gorilla {
