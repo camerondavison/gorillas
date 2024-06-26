@@ -230,17 +230,17 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
             start_bottom + (height / 2.0),
         );
 
-        // let gorilla_color = Color::DARK_GREEN;
         if i == 0 || i == num_buildings - 1 {
-            let (c, n) = if i == 0 {
-                (Gorilla(Player::One), "Player 1")
+            let g = if i == 0 {
+                Gorilla::one("Player 1".to_string())
             } else {
-                (Gorilla(Player::Two), "Player 2")
+                Gorilla::two("Player 2".to_string())
             };
 
             let gorilla_y = start_bottom + height + GORILLA_HEIGHT / 2.0;
+            let name = Name(g.name.clone());
             commands.spawn((
-                c,
+                g,
                 SpriteBundle {
                     transform: Transform {
                         translation: Vec2::new(x, gorilla_y).extend(GORILLA_Z_INDEX),
@@ -254,7 +254,7 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
                     },
                     ..default()
                 },
-                Name(n.to_string()),
+                name,
                 Collider,
                 AngleSpeed::default(),
             ));
@@ -411,13 +411,11 @@ fn spawn_building(
 
 fn check_for_collisions_explosion(
     mut commands: Commands,
-    banana_query: Query<(Entity, &Transform), With<Banana>>,
     explosion_query: Query<&Transform, With<Explosion>>,
     collider_query: Query<
         (Entity, &Transform, Option<&BuildingBrick>, Option<&Gorilla>),
         With<Collider>,
     >,
-    mut collision_events: EventWriter<CollisionEvent>,
     action: Res<State<Action>>,
     mut next_action: ResMut<NextState<Action>>,
     player: Res<State<Player>>,
@@ -441,7 +439,6 @@ fn check_for_collisions_explosion(
 fn check_for_collisions_banana(
     mut commands: Commands,
     banana_query: Query<(Entity, &Transform), With<Banana>>,
-    explosion_query: Query<&Transform, With<Explosion>>,
     collider_query: Query<
         (Entity, &Transform, Option<&BuildingBrick>, Option<&Gorilla>),
         With<Collider>,
@@ -586,7 +583,7 @@ fn throw_indicator(
     if let Ok(ref mut thrown_transform) = throw_indicator_query.get_single_mut() {
         if action.get() == &Action::Enter {
             for (gorilla, gorilla_as, gorilla_transform) in gorilla_query.iter() {
-                if player.get() == &gorilla.0 {
+                if player.get() == &gorilla.player {
                     thrown_transform.translation = Vec3::new(
                         gorilla_transform.translation.x,
                         gorilla_transform.translation.y,
@@ -683,7 +680,7 @@ fn change_action(
     keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
     for (ref mut g, ref mut a) in query_angle_speed.iter_mut() {
-        if player.get() == &g.0{
+        if player.get() == &g.player {
             if keyboard_input.any_just_pressed([
                 KeyCode::ArrowUp,
                 KeyCode::ArrowDown,
@@ -734,7 +731,7 @@ fn throw_banana(
 ) {
     if keyboard_input.just_pressed(KeyCode::Space) {
         for (g, t, a) in gorilla_query.iter() {
-            if &g.0 == player.get() {
+            if &g.player == player.get() {
                 let angle = a.angle;
                 let speed = a.speed;
                 // if left alone compass loos like this, but we want to make 90 straight up
@@ -829,7 +826,7 @@ fn update_text_left(
     let mut text = query.single_mut();
     if let Some((_, a, n)) = name_query
         .iter()
-        .find(|(g, _, _)| &g.0 == player.get())
+        .find(|(g, _, _)| &g.player == player.get())
     {
         text.sections[1].value = n.0.to_string();
 
