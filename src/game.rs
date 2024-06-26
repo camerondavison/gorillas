@@ -69,9 +69,6 @@ impl Default for AngleSpeed {
 }
 
 #[derive(Component)]
-struct Name(String);
-
-#[derive(Component)]
 struct Explosion;
 
 pub(crate) struct GamePlugin;
@@ -235,7 +232,6 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
             };
 
             let gorilla_y = start_bottom + height + GORILLA_HEIGHT / 2.0;
-            let name = Name(g.name.clone());
             commands.spawn((
                 g,
                 SpriteBundle {
@@ -251,7 +247,6 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
                     },
                     ..default()
                 },
-                name,
                 Collider,
                 AngleSpeed::default(),
             ));
@@ -798,7 +793,7 @@ fn watch_banana(
     mut next_action: ResMut<NextState<Action>>,
     gorilla_query: Query<&Transform, With<Gorilla>>,
     banana_query: Query<&Transform, With<Banana>>,
-    indicator_query: Query<(Entity, &ThrowIndicator)>,
+    indicator_query: Query<Entity, With<ThrowIndicator>>,
 ) {
     if let Ok(bt) = banana_query.get_single() {
         if action.get() == &Action::Throwing {
@@ -808,7 +803,7 @@ fn watch_banana(
             }
             if min_distance > 50.0 {
                 next_action.set(Action::Watching);
-                let (e, _) = indicator_query.single();
+                let e = indicator_query.single();
                 commands.entity(e).despawn();
             }
         }
@@ -843,14 +838,14 @@ fn update_text_left(
     action: Res<State<Action>>,
     player: Res<State<Player>>,
     mut query: Query<&mut Text, With<LeftBoard>>,
-    name_query: Query<(&Gorilla, &AngleSpeed, &Name)>,
+    name_query: Query<(&Gorilla, &AngleSpeed)>,
 ) {
     let mut text = query.single_mut();
-    if let Some((_, a, n)) = name_query
+    if let Some((g, a)) = name_query
         .iter()
-        .find(|(g, _, _)| &g.player == player.get())
+        .find(|(g, _)| &g.player == player.get())
     {
-        text.sections[1].value = n.0.to_string();
+        text.sections[1].value = g.name.to_string();
 
         let (action, v) = match action.get() {
             Action::PreEnter | Action::Enter => (
