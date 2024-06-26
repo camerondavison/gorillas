@@ -3,6 +3,7 @@
 use std::cmp;
 use std::f32::consts::PI;
 use std::time::Duration;
+use iyes_perf_ui::prelude::*;
 
 use rand::seq::SliceRandom;
 use rand::{thread_rng, RngCore};
@@ -62,6 +63,7 @@ pub(crate) struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
+        // default
         app.add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Gorillas".to_string(),
@@ -71,6 +73,12 @@ impl Plugin for GamePlugin {
             }),
             ..default()
         }))
+        // debug
+        .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
+        .add_plugins(bevy::diagnostic::EntityCountDiagnosticsPlugin)
+        .add_plugins(bevy::diagnostic::SystemInformationDiagnosticsPlugin)
+        .add_plugins(PerfUiPlugin)
+        // objects and colors
         .insert_resource(ClearColor(Color::rgb_u8(126, 161, 219)))
         .add_plugins(ShapePlugin)
         // our plugins
@@ -126,6 +134,9 @@ fn cleanup_system<T: Component>(mut commands: Commands, q: Query<Entity, With<T>
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     // Cameras
     commands.spawn(Camera2dBundle::default());
+
+    // Debug
+    commands.spawn(PerfUiCompleteBundle::default());
 
     // Text
     let font_bold = asset_server.load("fonts/FiraSans-Bold.ttf");
