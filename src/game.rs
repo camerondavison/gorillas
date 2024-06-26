@@ -3,6 +3,8 @@ use bevy::math::bounding::{Aabb2d, IntersectsVolume};
 
 use crate::players::PlayersPlugin;
 use crate::prelude::*;
+use bevy::input::common_conditions::*;
+
 use rand::prelude::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, RngCore};
@@ -97,7 +99,9 @@ impl Plugin for GamePlugin {
                 Update,
                 (
                     world_changer,
-                    throw_banana,
+                    throw_banana
+                        .run_if(in_state(Action::Enter))
+                        .run_if(input_just_pressed(KeyCode::Space)),
                     watch_banana,
                     update_text_left,
                     throw_indicator,
@@ -742,47 +746,43 @@ fn throw_banana(
     mut next_action: ResMut<NextState<Action>>,
     player: Res<State<Player>>,
     asset_server: Res<AssetServer>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
     gorilla_query: Query<(&Gorilla, &Transform, &AngleSpeed)>,
     mut commands: Commands,
 ) {
-    if keyboard_input.just_pressed(KeyCode::Space) {
-        for (g, t, a) in gorilla_query.iter() {
-            if &g.player == player.get() {
-                let angle = a.angle;
-                let speed = a.speed;
-                // if left alone compass loos like this, but we want to make 90 straight up
-                // and for 100 to be behind the head
-                //        0
-                // 270 <- * -> 90
-                //       180
-                //
-                // so we are just going to do (90 - *degrees*)
-                // to make it go
-                //       90
-                // 180 <- * -> 0
-                //       270
-                let radians = (90 - angle) as f32 * PI / 180.0;
-                let mut v = Vec2::new(
-                    (radians).sin() * (speed as f32),
-                    (radians).cos() * (speed as f32),
-                );
+    for (g, t, a) in gorilla_query.iter() {
+        if &g.player == player.get() {
+            let angle = a.angle;
+            let speed = a.speed;
+            // if left alone compass looks like this, but we want to make 90 straight up
+            // and for 100 to be behind the head
+            //        0
+            // 270 <- * -> 90
+            //       180
+            //
+            // so we are just going to do (90 - *degrees*)
+            // to make it go
+            //       90
+            // 180 <- * -> 0
+            //       270
+            let radians = (90 - angle) as f32 * PI / 180.0;
+            let mut v = Vec2::new(
+                radians.sin() * (speed as f32),
+                radians.cos() * (speed as f32),
+            );
 
-                // scale, then reverse for player 2
-                v *= PIXEL_STEP_SIZE / 1.5;
-                if player.get() == &Player::Two {
-                    v.x *= -1.0
-                }
-
-                spawn_banana(
-                    &asset_server,
-                    &mut commands,
-                    t.translation.truncate(),
-                    t.scale,
-                    v,
-                );
-                next_action.set(Action::Throwing);
+            // scale, then reverse for player 2
+            v *= PIXEL_STEP_SIZE / 1.5;
+            if player.get() == &Player::Two {
+                v.x *= -1.0
             }
+            spawn_banana(
+                &asset_server,
+                &mut commands,
+                t.translation.truncate(),
+                t.scale,
+                v,
+            );
+            next_action.set(Action::Throwing);
         }
     }
 }
@@ -841,10 +841,7 @@ fn update_text_left(
     name_query: Query<(&Gorilla, &AngleSpeed)>,
 ) {
     let mut text = query.single_mut();
-    if let Some((g, a)) = name_query
-        .iter()
-        .find(|(g, _)| &g.player == player.get())
-    {
+    if let Some((g, a)) = name_query.iter().find(|(g, _)| &g.player == player.get()) {
         text.sections[1].value = g.name.to_string();
 
         let (action, v) = match action.get() {
