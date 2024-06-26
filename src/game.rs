@@ -5,6 +5,7 @@ use crate::players::PlayersPlugin;
 use crate::prelude::*;
 use bevy::input::common_conditions::*;
 
+use crate::physics::PhysicsPlugin;
 use rand::prelude::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, RngCore};
@@ -24,23 +25,11 @@ struct Banana;
 #[derive(Component)]
 struct LeftBoard;
 
-#[derive(Component, Deref, DerefMut, Debug)]
-struct Velocity(Vec2);
-
-#[derive(Component, Debug)]
-struct Rotation(Quat);
-
 #[derive(Component)]
 struct Wind;
 
 #[derive(Component)]
 struct WindText;
-
-#[derive(Component)]
-struct Gravity;
-
-#[derive(Component, Deref)]
-struct Acceleration(Vec2);
 
 #[derive(Debug, States, Clone, Hash, Default, Ord, PartialOrd, Eq, PartialEq)]
 enum Action {
@@ -77,48 +66,48 @@ pub(crate) struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        let background_color: Color = Color::rgb_u8(126, 161, 219); //cornflower blue
-
-        app.insert_resource(ClearColor(background_color))
-            .add_plugins(DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Gorillas".to_string(),
-                    resolution: (SCREEN_WIDTH, SCREEN_HEIGHT).into(),
-                    resizable: false,
-                    ..default()
-                }),
+        app.add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Gorillas".to_string(),
+                resolution: (SCREEN_WIDTH, SCREEN_HEIGHT).into(),
+                resizable: false,
                 ..default()
-            }))
-            .add_plugins(audio::GorillasAudioPlugin)
-            .add_plugins(CollisionPlugin)
-            .add_plugins(PlayersPlugin)
-            .init_state::<Action>()
-            .add_plugins(ShapePlugin)
-            .add_systems(Startup, (setup, setup_arena))
-            .add_systems(
-                Update,
-                (
-                    world_changer,
-                    throw_banana
-                        .run_if(in_state(Action::Enter))
-                        .run_if(input_just_pressed(KeyCode::Space)),
-                    watch_banana,
-                    update_text_left,
-                    throw_indicator,
-                    state_watcher,
-                    change_action.run_if(in_state(Action::Enter)),
-                ),
+            }),
+            ..default()
+        }))
+        .insert_resource(ClearColor(Color::rgb_u8(126, 161, 219)))
+        .add_plugins(ShapePlugin)
+        // our plugins
+        .add_plugins(audio::GorillasAudioPlugin)
+        .add_plugins(CollisionPlugin)
+        .add_plugins(PlayersPlugin)
+        .add_plugins(PhysicsPlugin)
+        .init_state::<Action>()
+        .add_systems(Startup, (setup, setup_arena))
+        .add_systems(
+            Update,
+            (
+                world_changer,
+                throw_banana
+                    .run_if(in_state(Action::Enter))
+                    .run_if(input_just_pressed(KeyCode::Space)),
+                watch_banana,
+                update_text_left,
+                throw_indicator,
+                state_watcher,
+                change_action.run_if(in_state(Action::Enter)),
+            ),
+        )
+        .add_systems(
+            Update,
+            (
+                check_for_collisions_explosion,
+                check_for_collisions_banana.run_if(in_state(Action::Watching)),
+                animate_explosion,
             )
-            .add_systems(
-                Update,
-                (
-                    (apply_acceleration, apply_velocity, apply_rotation),
-                    check_for_collisions_explosion,
-                    check_for_collisions_banana.run_if(in_state(Action::Watching)),
-                    animate_explosion,
-                ),
-            )
-            .add_systems(Update, bevy::window::close_on_esc);
+                .chain(),
+        )
+        .add_systems(Update, bevy::window::close_on_esc);
     }
 }
 
@@ -258,7 +247,6 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
     }
 
     // World
-    commands.spawn((Gravity, Acceleration(Vec2::new(0.0, GRAVITY_Y_ACCEL))));
     spawn_wind_wth_accel(&mut commands, &mut rng, asset_server);
 }
 
@@ -341,32 +329,6 @@ fn world_changer(
         info!("new wind of {}", new_wind);
     }
 }
-
-fn apply_acceleration(
-    acceleration_query: Query<&Acceleration>,
-    mut velocity_query: Query<&mut Velocity>,
-) {
-    for acc in acceleration_query.iter() {
-        for mut velocity in velocity_query.iter_mut() {
-            velocity.x += acc.x * TIME_STEP;
-            velocity.y += acc.y * TIME_STEP;
-        }
-    }
-}
-
-fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>) {
-    for (mut transform, velocity) in query.iter_mut() {
-        transform.translation.x += velocity.x * TIME_STEP;
-        transform.translation.y += velocity.y * TIME_STEP;
-    }
-}
-
-fn apply_rotation(mut query: Query<(&mut Transform, &Rotation)>) {
-    for (mut transform, rotation) in query.iter_mut() {
-        transform.rotation *= rotation.0;
-    }
-}
-
 fn spawn_building(
     name: String,
     commands: &mut Commands,
