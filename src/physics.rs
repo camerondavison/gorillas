@@ -1,4 +1,5 @@
 use crate::constants::TIME_STEP;
+use crate::game::InGameplaySet;
 use crate::prelude::*;
 
 #[derive(Component, Deref, DerefMut, Debug)]
@@ -16,8 +17,10 @@ pub(crate) struct Gravity;
 pub(crate) struct PhysicsPlugin;
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_gravity)
-            .add_systems(Update, (apply_acceleration, apply_velocity, apply_rotation));
+        app.add_systems(Startup, setup_gravity).add_systems(
+            Update,
+            (apply_acceleration, apply_velocity, apply_rotation).in_set(InGameplaySet::Movement),
+        );
     }
 }
 

@@ -3,16 +3,15 @@ use bevy::math::bounding::{Aabb2d, IntersectsVolume};
 
 use crate::players::PlayersPlugin;
 use crate::prelude::*;
-use bevy::input::common_conditions::*;
 
+use crate::arrow;
 use crate::physics::PhysicsPlugin;
+use crate::wind::WindPlugin;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, RngCore};
 use std::cmp;
 use std::f32::consts::PI;
 use std::time::Duration;
-use crate::arrow;
-use crate::wind::WindPlugin;
 
 #[derive(Component)]
 struct BuildingBrick;
@@ -26,7 +25,6 @@ struct LeftBoard;
 #[derive(Debug, States, Clone, Hash, Default, Ord, PartialOrd, Eq, PartialEq)]
 pub(crate) enum Action {
     #[default]
-    PreEnter,
     Enter,
     Throwing,
     Watching,
@@ -54,6 +52,14 @@ impl Default for AngleSpeed {
 #[derive(Component)]
 struct Explosion;
 
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum InGameplaySet {
+    Watchers,
+    Gorillas,
+    Collisions,
+    Movement,
+}
+
 pub(crate) struct GamePlugin;
 
 impl Plugin for GamePlugin {
@@ -79,35 +85,44 @@ impl Plugin for GamePlugin {
         .init_state::<Action>()
         // Startup
         .add_systems(Startup, (setup, setup_arena))
+        // set ordering
+        .configure_sets(
+            Update,
+            InGameplaySet::Gorillas.run_if(in_state(Action::Enter)),
+        )
         // Update
         .add_systems(
             Update,
             (
-                update_text_left,
-                throw_indicator,
-                state_watcher,
-                change_action.run_if(in_state(Action::Enter)),
+                (state_watcher, update_text_left).in_set(InGameplaySet::Watchers),
+                (throw_indicator, rotate_and_change_velocity).in_set(InGameplaySet::Gorillas),
+                (
+                    check_for_gone_event.run_if(in_state(Action::Watching)),
+                    check_for_collisions_explosion,
+                    check_for_collisions_banana.run_if(in_state(Action::Watching)),
+                    animate_explosion,
+                )
+                    .chain()
+                    .in_set(InGameplaySet::Collisions),
             ),
         )
-        .add_systems(
-            Update,
-            (
-                check_for_collisions_explosion,
-                check_for_collisions_banana.run_if(in_state(Action::Watching)),
-                animate_explosion,
-            )
-                .chain(),
-        )
-        .add_systems(OnEnter(Action::Watching), despawn_throw_indicator)
+        .add_systems(OnEnter(Action::Enter), spawn_throw_indicator)
+        .add_systems(OnExit(Action::Throwing), cleanup_system::<ThrowIndicator>)
         .add_systems(Update, bevy::window::close_on_esc);
     }
 }
 
-fn despawn_throw_indicator(mut commands: Commands, indicator_query: Query<Entity, With<ThrowIndicator>>,) {
-    if let Ok(e) = indicator_query.get_single() {
-        commands.entity(e).despawn();
+fn cleanup_system<T: Component>(mut commands: Commands, q: Query<Entity, With<T>>) {
+    for e in q.iter() {
+        commands.entity(e).despawn_recursive();
     }
 }
+
+// fn despawn_throw_indicator(mut commands: Commands, indicator_query: Query<Entity, With<ThrowIndicator>>,) {
+//     if let Ok(e) = indicator_query.get_single() {
+//         commands.entity(e).despawn();
+//     }
+// }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     // Cameras
@@ -319,6 +334,28 @@ fn check_for_collisions_explosion(
     }
 }
 
+fn check_for_gone_event(
+    banana_query: Query<Entity, With<Banana>>,
+    events: EventReader<BananaGoneEvent>,
+    action: Res<State<Action>>,
+    mut next_action: ResMut<NextState<Action>>,
+    player: Res<State<Player>>,
+    mut next_player: ResMut<NextState<Player>>,
+) {
+    if !events.is_empty() {
+        if banana_query.is_empty() {
+            // there are no more bananas
+            next_player_system(
+                &action,
+                &mut next_action,
+                &player,
+                &mut next_player,
+                Action::Enter,
+            );
+        }
+    }
+}
+
 fn check_for_collisions_banana(
     mut commands: Commands,
     banana_query: Query<(Entity, &Transform), With<Banana>>,
@@ -334,19 +371,7 @@ fn check_for_collisions_banana(
 ) {
     // look up if our banana has hit something
     if let Ok((banana_entity, banana_transform)) = banana_query.get_single() {
-        // if off screen
-        if banana_transform.translation.x <= -SCREEN_WIDTH / 2.0
-            || banana_transform.translation.x >= SCREEN_WIDTH / 2.0
-        {
-            commands.entity(banana_entity).despawn();
-            next_player_system(
-                &action,
-                &mut next_action,
-                &player,
-                &mut next_player,
-                Action::PreEnter,
-            );
-        } else if despawn_from_collision_result(
+        if despawn_from_collision_result(
             format!("banana"),
             &mut commands,
             &collider_query,
@@ -364,7 +389,7 @@ fn check_for_collisions_banana(
                 &mut next_action,
                 &player,
                 &mut next_player,
-                Action::PreEnter,
+                Action::Enter,
             );
         }
     }
@@ -450,7 +475,7 @@ fn animate_explosion(
 ) {
     for (e, ref mut t) in explosion_query.iter_mut() {
         if t.scale.x > EXPLOSION_SIZE {
-            commands.entity(e).despawn();
+            commands.entity(e).despawn_recursive();
         } else {
             t.scale *= 1.0 + 5.0 * TIME_STEP;
         }
@@ -477,13 +502,30 @@ fn next_player_system(
         next_action.set(set_next_action);
     }
 }
+fn spawn_throw_indicator(mut commands: Commands, mut next_action: ResMut<NextState<Action>>) {
+    // spawn throw indicator
+    info!("spawn throw indicator");
+    let outline_color: Color = *Color::ORANGE_RED.clone().set_a(0.5);
+    let fill_color: Color = *Color::ORANGE.clone().set_a(0.5);
+    commands.spawn((
+        ThrowIndicator,
+        arrow::build_arrow_shape(
+            outline_color,
+            fill_color,
+            60,
+            30,
+            0.0,
+            0.0,
+            THROW_IND_Z_INDEX,
+        ),
+    ));
+    next_action.set(Action::Enter);
+}
 
 fn throw_indicator(
-    mut commands: Commands,
     mut throw_indicator_query: Query<&mut Transform, (With<ThrowIndicator>, Without<Gorilla>)>,
     gorilla_query: Query<(&Gorilla, &AngleSpeed, &Transform)>,
     action: Res<State<Action>>,
-    mut next_action: ResMut<NextState<Action>>,
     player: Res<State<Player>>,
 ) {
     if let Ok(ref mut thrown_transform) = throw_indicator_query.get_single_mut() {
@@ -508,24 +550,6 @@ fn throw_indicator(
                 }
             }
         }
-    } else if action.get() == &Action::PreEnter {
-        // spawn throw indicator
-        info!("spawn throw indicator");
-        let outline_color: Color = *Color::ORANGE_RED.clone().set_a(0.5);
-        let fill_color: Color = *Color::ORANGE.clone().set_a(0.5);
-        commands.spawn((
-            ThrowIndicator,
-            arrow::build_arrow_shape(
-                outline_color,
-                fill_color,
-                60,
-                30,
-                0.0,
-                0.0,
-                THROW_IND_Z_INDEX,
-            ),
-        ));
-        next_action.set(Action::Enter);
     }
 }
 
@@ -540,7 +564,7 @@ impl Default for MoveArrowState {
     }
 }
 
-fn change_action(
+fn rotate_and_change_velocity(
     time: Res<Time>,
     player: Res<State<Player>>,
     mut query_angle_speed: Query<(&Gorilla, &mut AngleSpeed)>,
@@ -599,7 +623,7 @@ fn update_text_left(
         text.sections[1].value = g.name.to_string();
 
         let (action, v) = match action.get() {
-            Action::PreEnter | Action::Enter => (
+            Action::Enter => (
                 "How do you want to throw?",
                 ("\nVelocity: ", format!("{}(m/s) @ {}°", a.speed, a.angle)),
             ),

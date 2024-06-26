@@ -48,7 +48,7 @@ fn spawn_wind_wth_accel(commands: &mut Commands, asset_server: Res<AssetServer>)
 
     commands.spawn((
         Wind,
-         wind_text_bundle(font_medium, top - 30.0, right, "wind".to_string()),
+        wind_text_bundle(font_medium, top - 30.0, right, "wind".to_string()),
     ));
 }
 
