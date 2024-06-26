@@ -112,6 +112,7 @@ fn spawn_banana(
             texture: asset_server.load("sprites/banana.png"),
             ..default()
         },
+        MovementState::new(g_pos),
         Velocity(initial_velocity),
         Rotation(banana_rotation),
     ));

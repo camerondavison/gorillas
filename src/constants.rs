@@ -1,6 +1,7 @@
 // Defines the amount of time that should elapse between each physics step.
-pub const TIME_STEP: f32 = 1.0 / 60.0;
-pub const PIXEL_STEP_SIZE: f32 = 10.0;
+pub const FIXED_HZ: f64 = 64.0;
+pub const TIME_STEP: f32 = (1.0 / 50.0) as f32;
+pub const PIXEL_STEP_SIZE: f32 = 20.0;
 
 // Define sizes
 pub const BUILDING_WIDTH: f32 = 160.0;
@@ -13,9 +14,11 @@ pub const BANANA_HEIGHT: f32 = 32.0;
 pub const GORILLA_HEIGHT: f32 = 64.0;
 pub const GORILLA_WIDTH: f32 = 32.0;
 pub const EXPLOSION_START_RADIUS: f32 = BANANA_WIDTH / 2.0;
+pub const EXPLOSION_START_DIAMETER: f32 = EXPLOSION_START_RADIUS * 2.0;
 pub const EXPLOSION_SIZE: f32 = 3.0;
 
 // Speeds
+pub const EXPLOSION_SPEED: f32 = 4.0 * (64.0 / FIXED_HZ as f32); // the more hz the slower
 pub const GRAVITY_Y_ACCEL: f32 = -9.8 * PIXEL_STEP_SIZE;
 
 // Z index

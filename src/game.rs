@@ -1,9 +1,9 @@
 #![allow(clippy::type_complexity)]
 
+use iyes_perf_ui::prelude::*;
 use std::cmp;
 use std::f32::consts::PI;
 use std::time::Duration;
-use iyes_perf_ui::prelude::*;
 
 use rand::seq::SliceRandom;
 use rand::{thread_rng, RngCore};
@@ -73,6 +73,7 @@ impl Plugin for GamePlugin {
             }),
             ..default()
         }))
+        .insert_resource(Time::<Fixed>::from_hz(FIXED_HZ)) // my monitor only does this
         // debug
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
         .add_plugins(bevy::diagnostic::EntityCountDiagnosticsPlugin)
@@ -104,8 +105,7 @@ impl Plugin for GamePlugin {
             Update,
             (
                 (state_logger, update_text_left).in_set(InGameplaySet::Watchers),
-                (throw_indicator, rotate_and_change_velocity).in_set(InGameplaySet::Gorillas),
-                (animate_explosion,).in_set(InGameplaySet::Collisions),
+                (throw_indicator, rotate_and_change_velocity_input).in_set(InGameplaySet::Gorillas),
                 (
                     next_player_system.run_if(in_state(Action::Watching)),
                     winner_player_system,
@@ -115,6 +115,7 @@ impl Plugin for GamePlugin {
         )
         .add_systems(OnEnter(Action::Enter), spawn_throw_indicator)
         .add_systems(OnExit(Action::Throwing), cleanup_system::<ThrowIndicator>)
+        .add_systems(OnEnter(Action::Winner), cleanup_system::<ThrowIndicator>)
         .add_systems(Update, bevy::window::close_on_esc);
     }
 }
@@ -125,18 +126,12 @@ fn cleanup_system<T: Component>(mut commands: Commands, q: Query<Entity, With<T>
     }
 }
 
-// fn despawn_throw_indicator(mut commands: Commands, indicator_query: Query<Entity, With<ThrowIndicator>>,) {
-//     if let Ok(e) = indicator_query.get_single() {
-//         commands.entity(e).despawn();
-//     }
-// }
-
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     // Cameras
     commands.spawn(Camera2dBundle::default());
 
     // Debug
-    commands.spawn(PerfUiCompleteBundle::default());
+    // commands.spawn(PerfUiCompleteBundle::default());
 
     // Text
     let font_bold = asset_server.load("fonts/FiraSans-Bold.ttf");
@@ -314,19 +309,6 @@ fn spawn_building(
     }
 }
 
-fn animate_explosion(
-    mut commands: Commands,
-    mut explosion_query: Query<(Entity, &mut Transform), With<Explosion>>,
-) {
-    for (e, ref mut t) in explosion_query.iter_mut() {
-        if t.scale.x > EXPLOSION_SIZE {
-            commands.entity(e).despawn_recursive();
-        } else {
-            t.scale *= 1.0 + 5.0 * TIME_STEP;
-        }
-    }
-}
-
 fn winner_player_system(
     mut next_action: ResMut<NextState<Action>>,
     mut next_player: ResMut<NextState<Player>>,
@@ -426,7 +408,7 @@ impl Default for MoveArrowState {
     }
 }
 
-fn rotate_and_change_velocity(
+fn rotate_and_change_velocity_input(
     time: Res<Time>,
     player: Res<State<Player>>,
     mut query_angle_speed: Query<(&Gorilla, &mut AngleSpeed)>,

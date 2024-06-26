@@ -46,8 +46,10 @@ fn check_for_collisions_explosion_gorilla(
 ) {
     // look up if explosion has hit something
     for explosion_transform in explosion_query.iter() {
+        // setup the explosion to look like it is the width of the circle that we are creating
         let mut t = explosion_transform.clone();
-        t.scale *= EXPLOSION_START_RADIUS * 2.0; // todo: what is this doing?
+        t.scale *= EXPLOSION_START_DIAMETER;
+
         let (_, did_collide_with_gorilla) =
             check_if_did_collide(&mut commands, &collider_query, &t);
 

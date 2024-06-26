@@ -43,7 +43,7 @@ fn spawn_wind_wth_accel(commands: &mut Commands, asset_server: Res<AssetServer>)
             y,
             WIND_Z_INDEX,
         ),
-        Acceleration(Vec2::new(wind as f32, 0.0)),
+        GlobalWorldAcceleration(Vec2::new(wind as f32, 0.0)),
     ));
 
     commands.spawn((

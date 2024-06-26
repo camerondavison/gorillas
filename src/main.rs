@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use iyes_perf_ui::prelude::*;
 
 mod arrow;
 mod audio;
@@ -13,7 +12,5 @@ mod prelude;
 mod wind;
 
 fn main() {
-    App::new()
-        .add_plugins(game::GamePlugin)
-        .run();
+    App::new().add_plugins(game::GamePlugin).run();
 }
