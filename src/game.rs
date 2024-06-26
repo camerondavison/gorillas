@@ -1,14 +1,14 @@
 #![allow(clippy::type_complexity)]
 use bevy::math::bounding::{Aabb2d, IntersectsVolume};
 
+use crate::players::PlayersPlugin;
+use crate::prelude::*;
 use rand::prelude::ThreadRng;
 use rand::seq::SliceRandom;
-use rand::{RngCore, thread_rng};
+use rand::{thread_rng, RngCore};
 use std::cmp;
 use std::f32::consts::PI;
 use std::time::Duration;
-use crate::players::PlayersPlugin;
-use crate::prelude::*;
 
 #[derive(Component)]
 struct BuildingBrick;
@@ -71,8 +71,6 @@ impl Default for AngleSpeed {
 #[derive(Component)]
 struct Name(String);
 
-
-
 #[derive(Component)]
 struct Explosion;
 
@@ -82,8 +80,7 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         let background_color: Color = Color::rgb_u8(126, 161, 219); //cornflower blue
 
-        app
-            .insert_resource(ClearColor(background_color))
+        app.insert_resource(ClearColor(background_color))
             .add_plugins(DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "Gorillas".to_string(),
@@ -431,7 +428,10 @@ fn check_for_collisions_explosion(
             &mut commands,
             &collider_query,
             &t,
-            &action, &mut next_action, &player, &mut next_player
+            &action,
+            &mut next_action,
+            &player,
+            &mut next_player,
         );
     }
 }
@@ -456,18 +456,33 @@ fn check_for_collisions_banana(
             || banana_transform.translation.x >= SCREEN_WIDTH / 2.0
         {
             commands.entity(banana_entity).despawn();
-            next_player_system(&action, &mut next_action, &player, &mut next_player, Action::PreEnter);
+            next_player_system(
+                &action,
+                &mut next_action,
+                &player,
+                &mut next_player,
+                Action::PreEnter,
+            );
         } else if despawn_from_collision_result(
             format!("banana"),
             &mut commands,
             &collider_query,
             banana_transform,
-            &action, &mut next_action, &player, &mut next_player
+            &action,
+            &mut next_action,
+            &player,
+            &mut next_player,
         ) {
             spawn_explosion(banana_transform.translation.truncate(), &mut commands);
             collision_events.send_default();
             commands.entity(banana_entity).despawn();
-            next_player_system(&action, &mut next_action, &player, &mut next_player, Action::PreEnter);
+            next_player_system(
+                &action,
+                &mut next_action,
+                &player,
+                &mut next_player,
+                Action::PreEnter,
+            );
         }
     }
 }
@@ -510,7 +525,13 @@ fn despawn_from_collision_result(
         }
     }
     if did_collide_with_gorilla {
-        next_player_system(&action, &mut next_action, &player, &mut next_player, Action::Winner);
+        next_player_system(
+            &action,
+            &mut next_action,
+            &player,
+            &mut next_player,
+            Action::Winner,
+        );
     }
 
     did_collide
@@ -553,13 +574,15 @@ fn animate_explosion(
     }
 }
 
-fn next_player_system(action: &Res<State<Action>>,
-               next_action: &mut ResMut<NextState<Action>>,
-               player: &Res<State<Player>>,
-                next_player: &mut ResMut<NextState<Player>>,
-                   set_next_action: Action
+fn next_player_system(
+    action: &Res<State<Action>>,
+    next_action: &mut ResMut<NextState<Action>>,
+    player: &Res<State<Player>>,
+    next_player: &mut ResMut<NextState<Player>>,
+    set_next_action: Action,
 ) {
-    if action.get() != &Action::Winner { // todo: make if in system?
+    if action.get() != &Action::Winner {
+        // todo: make if in system?
         info!(
             "next player, current is {:?}, action is {:?}",
             player, action
@@ -619,7 +642,7 @@ fn throw_indicator(
                 THROW_IND_Z_INDEX,
             ),
         ));
-        next_action.set( Action::Enter);
+        next_action.set(Action::Enter);
     }
 }
 
@@ -695,8 +718,7 @@ fn change_action(
                 KeyCode::ArrowDown,
                 KeyCode::ArrowLeft,
                 KeyCode::ArrowRight,
-            ])
-            {
+            ]) {
                 move_arrow_state.timer.tick(time.delta());
                 if move_arrow_state.timer.finished() {
                     mutate_speed_angle(&keyboard_input, a);

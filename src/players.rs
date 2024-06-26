@@ -15,10 +15,16 @@ pub(crate) struct Gorilla {
 
 impl Gorilla {
     pub(crate) fn one(name: String) -> Gorilla {
-        Gorilla { player: Player::One, name }
+        Gorilla {
+            player: Player::One,
+            name,
+        }
     }
     pub(crate) fn two(name: String) -> Gorilla {
-        Gorilla { player: Player::Two, name }
+        Gorilla {
+            player: Player::Two,
+            name,
+        }
     }
 }
 

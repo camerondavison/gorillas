@@ -1,13 +1,11 @@
 use bevy::prelude::*;
-mod constants;
-mod prelude;
-mod game;
 mod audio;
 mod collision;
+mod constants;
+mod game;
 mod players;
+mod prelude;
 
 fn main() {
-    App::new()
-        .add_plugins(crate::game::GamePlugin)
-        .run();
+    App::new().add_plugins(crate::game::GamePlugin).run();
 }

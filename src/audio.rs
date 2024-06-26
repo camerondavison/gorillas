@@ -1,14 +1,16 @@
 use crate::prelude::*;
 use bevy_kira_audio::{Audio, AudioControl, AudioPlugin, AudioSource};
 pub(crate) mod prelude {
-    pub(crate) use super::{GorillasAudioPlugin};
+    pub(crate) use super::GorillasAudioPlugin;
 }
 #[derive(Resource)]
 struct ExplosionSound(Handle<AudioSource>);
 pub(crate) struct GorillasAudioPlugin;
 impl Plugin for GorillasAudioPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(AudioPlugin).add_systems(Startup, setup).add_systems(Update,play_collision_sound);
+        app.add_plugins(AudioPlugin)
+            .add_systems(Startup, setup)
+            .add_systems(Update, play_collision_sound);
     }
 }
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
