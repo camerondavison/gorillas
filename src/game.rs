@@ -6,12 +6,13 @@ use crate::prelude::*;
 use bevy::input::common_conditions::*;
 
 use crate::physics::PhysicsPlugin;
-use rand::prelude::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, RngCore};
 use std::cmp;
 use std::f32::consts::PI;
 use std::time::Duration;
+use crate::arrow;
+use crate::wind::WindPlugin;
 
 #[derive(Component)]
 struct BuildingBrick;
@@ -24,12 +25,6 @@ struct Banana;
 
 #[derive(Component)]
 struct LeftBoard;
-
-#[derive(Component)]
-struct Wind;
-
-#[derive(Component)]
-struct WindText;
 
 #[derive(Debug, States, Clone, Hash, Default, Ord, PartialOrd, Eq, PartialEq)]
 enum Action {
@@ -82,12 +77,14 @@ impl Plugin for GamePlugin {
         .add_plugins(CollisionPlugin)
         .add_plugins(PlayersPlugin)
         .add_plugins(PhysicsPlugin)
+        .add_plugins(WindPlugin)
         .init_state::<Action>()
+        // Startup
         .add_systems(Startup, (setup, setup_arena))
+        // Update
         .add_systems(
             Update,
             (
-                world_changer,
                 throw_banana
                     .run_if(in_state(Action::Enter))
                     .run_if(input_just_pressed(KeyCode::Space)),
@@ -245,9 +242,6 @@ fn setup_arena(mut commands: Commands, asset_server: Res<AssetServer>) {
             ));
         }
     }
-
-    // World
-    spawn_wind_wth_accel(&mut commands, &mut rng, asset_server);
 }
 
 fn state_watcher(mut action_change: EventReader<StateTransitionEvent<Action>>) {
@@ -256,79 +250,6 @@ fn state_watcher(mut action_change: EventReader<StateTransitionEvent<Action>>) {
     }
 }
 
-fn spawn_wind_wth_accel(
-    commands: &mut Commands,
-    rng: &mut ThreadRng,
-    asset_server: Res<AssetServer>,
-) -> i32 {
-    let font_medium = asset_server.load("fonts/FiraMono-Medium.ttf");
-    let wind = (rng.next_u32() % 40) as i32 - 20;
-    let raw_length = wind as i16 * 10i16;
-    let top = 50.0;
-    let right = 300.0;
-    let y = SCREEN_HEIGHT / 2.0 - top;
-    let x = SCREEN_WIDTH / 2.0 - right;
-    commands.spawn((
-        Wind,
-        build_arrow_shape(
-            Color::DARK_GRAY,
-            Color::GRAY,
-            raw_length,
-            30,
-            x,
-            y,
-            WIND_Z_INDEX,
-        ),
-        Acceleration(Vec2::new(wind as f32, 0.0)),
-    ));
-
-    //  todo: can we add wind text as a child of something?
-    commands.spawn((
-        WindText,
-        text_bundle(font_medium, top - 30.0, right, "wind".to_string()),
-    ));
-    wind
-}
-
-fn text_bundle(font_medium: Handle<Font>, top: f32, right: f32, value: String) -> TextBundle {
-    TextBundle {
-        text: Text {
-            sections: vec![TextSection {
-                value,
-                style: TextStyle {
-                    font: font_medium,
-                    font_size: 30.0,
-                    color: Color::BLACK,
-                },
-            }],
-            ..default()
-        },
-        style: Style {
-            position_type: PositionType::Absolute,
-            top: Val::Px(top),
-            right: Val::Px(right),
-            ..default()
-        },
-        ..default()
-    }
-}
-
-fn world_changer(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    wind_query: Query<Entity, Or<(With<Wind>, With<WindText>)>>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-) {
-    // FYI it is the qwerty W key not just W
-    if keyboard_input.just_pressed(KeyCode::KeyW) {
-        for we in wind_query.iter() {
-            commands.entity(we).despawn();
-        }
-        let mut rng = thread_rng();
-        let new_wind = spawn_wind_wth_accel(&mut commands, &mut rng, asset_server);
-        info!("new wind of {}", new_wind);
-    }
-}
 fn spawn_building(
     name: String,
     commands: &mut Commands,
@@ -593,7 +514,7 @@ fn throw_indicator(
         let fill_color: Color = *Color::ORANGE.clone().set_a(0.5);
         commands.spawn((
             ThrowIndicator,
-            build_arrow_shape(
+            arrow::build_arrow_shape(
                 outline_color,
                 fill_color,
                 60,
@@ -605,44 +526,6 @@ fn throw_indicator(
         ));
         next_action.set(Action::Enter);
     }
-}
-
-fn build_arrow_shape(
-    outline_color: Color,
-    fill_color: Color,
-    raw_length: i16,
-    height: u16,
-    x: f32,
-    y: f32,
-    z: f32,
-) -> impl Bundle {
-    let length = raw_length.abs() as u16;
-    let scale = if raw_length < 0 { -1.0 } else { 1.0 };
-    let svg_path_string = arrow_path(&length, height);
-    (
-        ShapeBundle {
-            path: GeometryBuilder::build_as(&shapes::SvgPathShape {
-                svg_doc_size_in_px: Vec2::new(length as f32, height as f32),
-                svg_path_string,
-            }),
-            spatial: SpatialBundle::from_transform(
-                Transform::from_translation(Vec3::new(x, y, z))
-                    .with_scale(Vec2::new(scale, 1.0).extend(1.0)),
-            ),
-            ..default()
-        },
-        Fill::color(fill_color),
-        Stroke::color(outline_color),
-    )
-}
-
-fn arrow_path(length: &u16, height: u16) -> String {
-    let mut svg_path_string = format!("M {} {}", length / 2, height / 2);
-    svg_path_string.push_str(&format!(
-        "h {} v -6 l 8 8 l -8 8 v -6 h -{} v -4",
-        length, length
-    ));
-    svg_path_string
 }
 
 struct MoveArrowState {
