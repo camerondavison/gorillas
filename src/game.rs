@@ -21,13 +21,10 @@ struct BuildingBrick;
 struct Collider;
 
 #[derive(Component)]
-struct Banana;
-
-#[derive(Component)]
 struct LeftBoard;
 
 #[derive(Debug, States, Clone, Hash, Default, Ord, PartialOrd, Eq, PartialEq)]
-enum Action {
+pub(crate) enum Action {
     #[default]
     PreEnter,
     Enter,
@@ -37,13 +34,13 @@ enum Action {
 }
 
 #[derive(Component)]
-struct AngleSpeed {
-    angle: u8,
-    speed: u8,
-}
+pub(crate) struct ThrowIndicator;
 
 #[derive(Component)]
-struct ThrowIndicator;
+pub(crate) struct AngleSpeed {
+    pub(crate) angle: u8,
+    pub(crate) speed: u8,
+}
 
 impl Default for AngleSpeed {
     fn default() -> Self {
@@ -78,6 +75,7 @@ impl Plugin for GamePlugin {
         .add_plugins(PlayersPlugin)
         .add_plugins(PhysicsPlugin)
         .add_plugins(WindPlugin)
+        .add_plugins(BananaPlugin)
         .init_state::<Action>()
         // Startup
         .add_systems(Startup, (setup, setup_arena))
@@ -85,10 +83,6 @@ impl Plugin for GamePlugin {
         .add_systems(
             Update,
             (
-                throw_banana
-                    .run_if(in_state(Action::Enter))
-                    .run_if(input_just_pressed(KeyCode::Space)),
-                watch_banana,
                 update_text_left,
                 throw_indicator,
                 state_watcher,
@@ -104,7 +98,14 @@ impl Plugin for GamePlugin {
             )
                 .chain(),
         )
+        .add_systems(OnEnter(Action::Watching), despawn_throw_indicator)
         .add_systems(Update, bevy::window::close_on_esc);
+    }
+}
+
+fn despawn_throw_indicator(mut commands: Commands, indicator_query: Query<Entity, With<ThrowIndicator>>,) {
+    if let Ok(e) = indicator_query.get_single() {
+        commands.entity(e).despawn();
     }
 }
 
@@ -585,98 +586,6 @@ fn mutate_speed_angle(keyboard_input: &Res<ButtonInput<KeyCode>>, a: &mut AngleS
     if keyboard_input.pressed(KeyCode::ArrowLeft) {
         a.speed = cmp::max(10, a.speed - 1);
     }
-}
-
-fn throw_banana(
-    mut next_action: ResMut<NextState<Action>>,
-    player: Res<State<Player>>,
-    asset_server: Res<AssetServer>,
-    gorilla_query: Query<(&Gorilla, &Transform, &AngleSpeed)>,
-    mut commands: Commands,
-) {
-    for (g, t, a) in gorilla_query.iter() {
-        if &g.player == player.get() {
-            let angle = a.angle;
-            let speed = a.speed;
-            // if left alone compass looks like this, but we want to make 90 straight up
-            // and for 100 to be behind the head
-            //        0
-            // 270 <- * -> 90
-            //       180
-            //
-            // so we are just going to do (90 - *degrees*)
-            // to make it go
-            //       90
-            // 180 <- * -> 0
-            //       270
-            let radians = (90 - angle) as f32 * PI / 180.0;
-            let mut v = Vec2::new(
-                radians.sin() * (speed as f32),
-                radians.cos() * (speed as f32),
-            );
-
-            // scale, then reverse for player 2
-            v *= PIXEL_STEP_SIZE / 1.5;
-            if player.get() == &Player::Two {
-                v.x *= -1.0
-            }
-            spawn_banana(
-                &asset_server,
-                &mut commands,
-                t.translation.truncate(),
-                t.scale,
-                v,
-            );
-            next_action.set(Action::Throwing);
-        }
-    }
-}
-
-fn watch_banana(
-    mut commands: Commands,
-    action: Res<State<Action>>,
-    mut next_action: ResMut<NextState<Action>>,
-    gorilla_query: Query<&Transform, With<Gorilla>>,
-    banana_query: Query<&Transform, With<Banana>>,
-    indicator_query: Query<Entity, With<ThrowIndicator>>,
-) {
-    if let Ok(bt) = banana_query.get_single() {
-        if action.get() == &Action::Throwing {
-            let mut min_distance = f32::MAX;
-            for t in gorilla_query.iter() {
-                min_distance = min_distance.min(t.translation.distance(bt.translation))
-            }
-            if min_distance > 50.0 {
-                next_action.set(Action::Watching);
-                let e = indicator_query.single();
-                commands.entity(e).despawn();
-            }
-        }
-    }
-}
-
-fn spawn_banana(
-    asset_server: &Res<AssetServer>,
-    commands: &mut Commands,
-    g_pos: Vec2,
-    _g_size: Vec3,
-    initial_velocity: Vec2,
-) {
-    let banana_rotation: Quat = Quat::from_rotation_z(PI * -TIME_STEP);
-    commands.spawn((
-        Banana,
-        SpriteBundle {
-            transform: Transform {
-                translation: g_pos.extend(BANANA_Z_INDEX),
-                scale: Vec2::new(BANANA_WIDTH / 500.0, BANANA_HEIGHT / 500.0).extend(1.0), // scale z=1.0 in 2D
-                ..default()
-            },
-            texture: asset_server.load("sprites/banana.png"),
-            ..default()
-        },
-        Velocity(initial_velocity),
-        Rotation(banana_rotation),
-    ));
 }
 
 fn update_text_left(
