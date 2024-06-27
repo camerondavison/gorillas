@@ -124,9 +124,9 @@ fn check_banana_off_screen(
     banana_query: Query<(Entity, &Transform), With<Banana>>,
 ) {
     for (banana_entity, banana_transform) in banana_query.iter() {
-        // if off screen - todo: add bottom/top
         if banana_transform.translation.x <= -SCREEN_WIDTH / 2.0
             || banana_transform.translation.x >= SCREEN_WIDTH / 2.0
+            || banana_transform.translation.y <= -SCREEN_HEIGHT / 2.0
         {
             info!("sending banana gone event");
             commands.entity(banana_entity).despawn_recursive();
