@@ -18,6 +18,30 @@ use crate::wind::WindPlugin;
 pub(crate) struct BuildingBrick;
 
 #[derive(Component)]
+pub(crate) struct ExplodeBrick {
+    frames_left: i32,
+    a_step: f32,
+}
+
+impl ExplodeBrick {
+    pub(crate) fn new(a_step: f32) -> Self {
+        ExplodeBrick {
+            frames_left: 200,
+            a_step,
+        }
+    }
+    pub(crate) fn decr(&mut self) {
+        self.frames_left -= 1;
+    }
+    pub(crate) fn is_done(&self) -> bool {
+        self.frames_left <= 0
+    }
+    pub(crate) fn a_step(&self) -> f32 {
+        self.a_step
+    }
+}
+
+#[derive(Component)]
 struct LeftBoard;
 
 #[derive(Debug, States, Clone, Hash, Default, Ord, PartialOrd, Eq, PartialEq)]
@@ -131,7 +155,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn(Camera2dBundle::default());
 
     // Debug
-    // commands.spawn(PerfUiCompleteBundle::default());
+    commands.spawn(PerfUiCompleteBundle::default());
 
     // Text
     let font_bold = asset_server.load("fonts/FiraSans-Bold.ttf");

@@ -1,6 +1,7 @@
-use crate::game::{Action, BuildingBrick, Explosion, InGameplaySet};
+use crate::game::{Action, BuildingBrick, ExplodeBrick, Explosion, InGameplaySet};
 use crate::prelude::*;
 use bevy::math::bounding::{Aabb2d, IntersectsVolume};
+use rand::{thread_rng, Rng};
 
 #[derive(Resource, Event)]
 pub(crate) struct GorillaCollisionEvent {
@@ -25,6 +26,7 @@ impl Plugin for CollisionPlugin {
                 (
                     // remove the banana before we check for more collisions
                     spawn_explosion,
+                    decr_and_despawn_brick,
                     // check for collisions
                     check_for_collisions_explosion_gorilla.run_if(not(in_state(Action::Winner))),
                     check_for_collisions_banana.run_if(in_state(Action::Watching)),
@@ -80,6 +82,21 @@ fn check_for_collisions_banana(
     }
 }
 
+fn decr_and_despawn_brick(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut ExplodeBrick, &mut Sprite), With<BuildingBrick>>,
+) {
+    for (e, mut b, mut s) in query.iter_mut() {
+        b.decr();
+        info!("brick a {}", s.color.a());
+        let new_a = (s.color.a() - b.a_step()).clamp(0.0, 1.0);
+        s.color.set_a(new_a);
+        if b.is_done() {
+            commands.entity(e).despawn_recursive()
+        }
+    }
+}
+
 fn check_if_did_collide(
     commands: &mut Commands,
     collider_query: &Query<
@@ -106,7 +123,21 @@ fn check_if_did_collide(
                 did_collide_with_gorilla = Some(g.player.clone());
             }
             if maybe_building.is_some() {
-                commands.entity(e).despawn_recursive();
+                // collided with brick
+                // * remove collider, so that they are not blow up anymore
+                // * put a random velocity on them so that they fly around
+                let mut rng = thread_rng();
+                commands.entity(e).remove::<Collider>().insert((
+                    ExplodeBrick::new(rng.gen_range(BRICK_A_STEP_RANGE)),
+                    Velocity(
+                        [
+                            rng.gen_range(BRICK_EXPLODE_STARTING_VELOCITY_RANGE_X),
+                            rng.gen_range(BRICK_EXPLODE_STARTING_VELOCITY_RANGE_Y),
+                        ]
+                        .into(),
+                    ),
+                    MovementState::new(transform.translation.truncate()),
+                ));
             }
         }
     }

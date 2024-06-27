@@ -12,14 +12,17 @@ pub(crate) struct Velocity(pub(crate) Vec2);
 pub(crate) struct Rotation(pub(crate) Quat);
 
 #[derive(Component, Debug)]
-pub(crate) struct MovementState{
+pub(crate) struct MovementState {
     old_position: Vec2,
     cur_position: Vec2,
 }
 
 impl MovementState {
     pub(crate) fn new(current_position: Vec2) -> Self {
-        MovementState { old_position: current_position, cur_position: current_position }
+        MovementState {
+            old_position: current_position,
+            cur_position: current_position,
+        }
     }
 }
 
@@ -32,7 +35,10 @@ impl Plugin for PhysicsPlugin {
         app.add_systems(Startup, setup_gravity).add_systems(
             FixedUpdate,
             (
-                ((apply_acceleration, apply_velocity, lerp_velocity).chain(), apply_rotation)
+                (
+                    (apply_acceleration, apply_velocity, lerp_velocity).chain(),
+                    apply_rotation,
+                )
                     .in_set(InGameplaySet::Movement),
                 (animate_explosion).in_set(InGameplaySet::Collisions),
             ),
@@ -54,7 +60,10 @@ fn animate_explosion(
 }
 
 fn setup_gravity(mut commands: Commands) {
-    commands.spawn((Gravity, GlobalWorldAcceleration(Vec2::new(0.0, GRAVITY_Y_ACCEL))));
+    commands.spawn((
+        Gravity,
+        GlobalWorldAcceleration(Vec2::new(0.0, GRAVITY_Y_ACCEL)),
+    ));
 }
 
 fn apply_acceleration(
@@ -77,10 +86,16 @@ fn apply_velocity(fixed_time: Res<Time<Fixed>>, mut query: Query<(&Velocity, &mu
     }
 }
 
-fn lerp_velocity(fixed_time: Res<Time<Fixed>>, mut query: Query<(&mut Transform, &mut MovementState)>) {
+fn lerp_velocity(
+    fixed_time: Res<Time<Fixed>>,
+    mut query: Query<(&mut Transform, &mut MovementState)>,
+) {
     let a = fixed_time.overstep_fraction();
     for (mut transform, movement) in query.iter_mut() {
-        transform.translation = movement.old_position.lerp(movement.cur_position, a).extend(transform.translation.z)
+        transform.translation = movement
+            .old_position
+            .lerp(movement.cur_position, a)
+            .extend(transform.translation.z)
     }
 }
 
