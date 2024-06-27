@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 // Defines the amount of time that should elapse between each physics step.
-pub const FIXED_HZ: f64 = 20.0;
+pub const FIXED_HZ: f64 = 64.0;
 pub const TIME_STEP: f32 = (1.0 / 50.0) as f32;
 pub const PIXEL_STEP_SIZE: f32 = 20.0;
 

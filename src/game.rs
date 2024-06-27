@@ -31,7 +31,7 @@ impl ExplodeBrick {
         }
     }
     pub(crate) fn decr(&mut self) {
-        self.frames_left -= 1;
+        self.frames_left = (self.frames_left - 1).clamp(0, self.frames_left);
     }
     pub(crate) fn is_done(&self) -> bool {
         self.frames_left <= 0
@@ -96,7 +96,7 @@ impl Plugin for GamePlugin {
                 ..default()
             }),
             ..default()
-        }))
+        }).set(ImagePlugin::default_nearest()))
         .insert_resource(Time::<Fixed>::from_hz(FIXED_HZ)) // my monitor only does this
         // debug
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)

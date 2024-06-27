@@ -87,10 +87,14 @@ fn decr_and_despawn_brick(
     mut query: Query<(Entity, &mut ExplodeBrick, &mut Sprite), With<BuildingBrick>>,
 ) {
     for (e, mut b, mut s) in query.iter_mut() {
-        b.decr();
-        info!("brick a {}", s.color.a());
-        let new_a = (s.color.a() - b.a_step()).clamp(0.0, 1.0);
+        
+        // reduce alpha
+        let old_a = s.color.a();
+        let new_a = (old_a - b.a_step()).clamp(0.0, old_a);
         s.color.set_a(new_a);
+        
+        // despawn
+        b.decr();
         if b.is_done() {
             commands.entity(e).despawn_recursive()
         }

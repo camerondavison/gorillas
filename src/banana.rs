@@ -106,10 +106,10 @@ fn spawn_banana(
         SpriteBundle {
             transform: Transform {
                 translation: g_pos.extend(BANANA_Z_INDEX),
-                scale: Vec2::new(BANANA_WIDTH / 500.0, BANANA_HEIGHT / 500.0).extend(1.0),
+                scale: Vec2::new(BANANA_WIDTH / 64.0, BANANA_HEIGHT / 64.0).extend(1.0),
                 ..default()
             },
-            texture: asset_server.load("sprites/banana.png"),
+            texture: asset_server.load("sprites/banana_64x64.png"),
             ..default()
         },
         MovementState::new(g_pos),
