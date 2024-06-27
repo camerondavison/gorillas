@@ -155,7 +155,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn(Camera2dBundle::default());
 
     // Debug
-    commands.spawn(PerfUiCompleteBundle::default());
+    // commands.spawn(PerfUiCompleteBundle::default());
 
     // Text
     let font_bold = asset_server.load("fonts/FiraSans-Bold.ttf");

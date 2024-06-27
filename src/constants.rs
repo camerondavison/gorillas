@@ -7,7 +7,7 @@ pub const PIXEL_STEP_SIZE: f32 = 20.0;
 
 // Define sizes
 pub const BUILDING_WIDTH: f32 = 160.0;
-pub const BUILDING_BRICK_WIDTH: f32 = 32.0;
+pub const BUILDING_BRICK_WIDTH: f32 = 20.0;
 pub const BUILDING_BRICK_HEIGHT: f32 = 8.0;
 pub const SCREEN_WIDTH: f32 = 1280.0;
 pub const SCREEN_HEIGHT: f32 = 720.0;
